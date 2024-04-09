@@ -298,12 +298,12 @@ mod tests {
     #[test]
     fn test_encoding() {
         let cmd = MasterToActiveLook::DisplayPower { en: true };
-        let expected = vec![0, 1];
+        let expected: &[u8] = &[0, 1];
 
         let bytes = cmd.to_bytes().unwrap();
         assert_eq!(expected, bytes);
 
-        let (_rest, decoded) = MasterToActiveLook::from_bytes((bytes.as_ref(), 0)).unwrap();
+        let decoded = MasterToActiveLook::try_from(expected).unwrap();
         assert_eq!(decoded, cmd);
     }
 }
