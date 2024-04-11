@@ -1,3 +1,4 @@
+use binary_layout::prelude::*;
 /// ActiveLook commands
 use deku::prelude::*;
 
@@ -291,6 +292,19 @@ pub enum ActiveLookToMaster {
     DevInfo { parameter: u8 },
 }
 
+mod test_binary_layout {
+    use binary_layout::prelude::*;
+
+    binary_layout!(graphics_txt, BigEndian, {
+        x: i16,
+        y: i16,
+        r: u8,
+        f: u8,
+        c: u8,
+        string: [u8], // open ended byte array, matches until the end of the packet
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +319,24 @@ mod tests {
 
         let decoded = MasterToActiveLook::try_from(expected).unwrap();
         assert_eq!(decoded, cmd);
+    }
+
+    #[test]
+    fn test_binary_layout_txt() {
+        let bytes = &[0, 0, 0, 0, 0, 8, 42, 0x30, 0x31, 0x32, 0];
+        let view = test_binary_layout::graphics_txt::View::new(bytes);
+
+        let mut memory = [0u8; 255];
+
+        println!("Size {:?}", test_binary_layout::graphics_txt::SIZE);
+        let mut expected = test_binary_layout::graphics_txt::View::new(memory);
+        expected.x_mut().write(0);
+        expected.y_mut().write(0);
+        expected.r_mut().write(0);
+        expected.f_mut().write(8);
+        expected.c_mut().write(42);
+        expected.string_mut().copy_from_slice(b"123\0");
+
+        assert_eq!(bytes, &memory[..bytes.len()]);
     }
 }
