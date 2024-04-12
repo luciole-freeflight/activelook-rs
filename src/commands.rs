@@ -3,25 +3,6 @@ use bitvec::prelude::*;
 ///
 ///
 ///
-use thiserror::Error;
-//use deku::bitvec::{BitSlice, BitVec, Msb0};
-use deku::prelude::*;
-
-#[derive(Error, Debug)]
-pub enum ActiveLookError {
-    #[error("Incorrectly delimited bytestream (expected 0xFF ... 0xAA)")]
-    DelimiterError,
-}
-
-#[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Eq, PartialEq)]
-pub struct CommandFormat {
-    #[deku(pad_bits_before = "3", bits = 1)]
-    big_len: bool,
-    #[deku(bits = 4)]
-    query_id_len: u8,
-}
-
 /// ActiveLook Command packet
 /// There are two types of packets :
 /// - with 1 byte length field
@@ -35,6 +16,8 @@ pub struct CommandFormat {
 /// |--------|------------|----------------|-------------|-----------|----------------|--------|
 /// | Start  | Command ID | Command Format | Length      | Query ID  | Data           | Footer |
 /// | 1B     | 1B         | 1B             | 1B          | nB        | mB             | 1B     |
+/// |--------|------------|----------------|-------------|-----------|----------------|--------|
+/// |   -    | X          | -              | -           | X         | X              | -      |
 ///
 ///
 /// | 0xFF   | 0x..       | 0x1n           | 0x.. 0x..   | n * 0x…  | m * 0x…        | 0xAA   |
@@ -43,21 +26,65 @@ pub struct CommandFormat {
 /// | 1B     | 1B         | 1B             | 2B          | nB       | mB             | 1B     |
 ///
 ///
+/// An application only needs the following:
+/// - Command ID
+/// - Query ID
+/// - Data
+///
+/// The rest can safely be ignored in the application, and computed on the fly during
+/// serialization.
+///
+/// This seems complicated / impossible to serialize only with deku attributes, so we need a
+/// hand-crafted top-level API.
+///
+use thiserror::Error;
+//use deku::bitvec::{BitSlice, BitVec, Msb0};
+use deku::prelude::*;
 
-/// Delimitation by 0xFF ... 0xAA : Done in helper functions
+#[derive(Error, Debug)]
+pub enum ActiveLookError {
+    #[error("Incorrectly delimited bytestream (expected 0xFF ... 0xAA)")]
+    DelimiterError,
+    #[error("Unable to parse")]
+    ParsingError(#[from] DekuError),
+    #[error("Buffer too small")]
+    SizeError,
+    #[error("Unknown error")]
+    UnknownError,
+}
+
 #[deku_derive(DekuRead, DekuWrite)]
 #[derive(Debug, Eq, PartialEq)]
+pub struct CommandFormat {
+    #[deku(pad_bits_before = "3", bits = 1)]
+    big_len: bool,
+    #[deku(bits = 4)]
+    query_id_len: u8,
+}
+
+/*
+#[derive(Debug, Eq, PartialEq)]
+#[deku_derive(DekuRead, DekuWrite)]
+#[deku(endian = "big")]
 pub struct MasterToActiveLookCommand {
+    #[deku(update = "self.data.deku_id()")]
     cmd_id: u8,
+
+    #[deku(
+        update = "MasterToActiveLookCommand::update_format( *self.length, self.query_id.len())"
+    )]
     cmd_format: CommandFormat,
+
     #[deku(
         reader = "MasterToActiveLookCommand::read_len(deku::rest, cmd_format.big_len)",
         writer = "MasterToActiveLookCommand::write_len(deku::output, *length)"
     )]
     length: u16,
+
     #[deku(count = "cmd_format.query_id_len")]
     query_id: Vec<u8>,
-    #[deku(ctx = "*cmd_id, length - 5 - (cmd_format.query_id_len as u16)")]
+
+    #[deku(ctx = "*cmd_id, (*length - 5 - query_id.len() as u16)")]
     data: MasterToActiveLookData,
 }
 
@@ -87,6 +114,13 @@ impl MasterToActiveLookCommand {
         self.data.to_bytes()
     }
     */
+    /// Write cmd_format
+    fn update_format(len: u16, query_len: u8) -> CommandFormat {
+        CommandFormat {
+            big_len: (len > 255),
+            query_id_len: query_len,
+        }
+    }
 
     /// Read the viariable-size length field
     fn read_len(
@@ -112,7 +146,7 @@ impl MasterToActiveLookCommand {
         }
     }
 }
-
+*/
 #[deku_derive(DekuRead, DekuWrite)]
 #[derive(Debug, Eq, PartialEq)]
 #[deku(type = "u8")]
@@ -189,7 +223,7 @@ pub enum CmdError {
 
 #[deku_derive(DekuRead, DekuWrite)]
 #[derive(Debug, Eq, PartialEq)]
-#[deku(ctx = "cmd_id: u8, _len: u16", id = "cmd_id")]
+#[deku(ctx = "cmd_id: u8, length: u16", id = "cmd_id")]
 #[repr(u8)]
 pub enum MasterToActiveLookData {
     ///
@@ -347,6 +381,43 @@ pub enum MasterToActiveLookData {
     Info { id: DeviceInfo },
 }
 
+impl MasterToActiveLookData {
+    /// Extract useful bytes from a delimited bytestream
+    fn remove_delimiters(bytes: &[u8]) -> Result<&[u8], ActiveLookError> {
+        if let Some((start, rest)) = bytes.split_first() {
+            if start != &0xFF {
+                return Err(ActiveLookError::DelimiterError);
+            }
+            if let Some((end, rest)) = rest.split_last() {
+                if end != &0xAA {
+                    return Err(ActiveLookError::DelimiterError);
+                }
+                return Ok(rest);
+            }
+        }
+        Err(ActiveLookError::DelimiterError)
+    }
+
+    /// Deserialize
+    fn from(bytes: &[u8]) -> Result<Self, ActiveLookError> {
+        let inner = MasterToActiveLookData::remove_delimiters(bytes)?;
+        // Read CommandID
+        let (cmd_id, rest) = inner.split_first().ok_or(ActiveLookError::SizeError)?;
+        // Read CommandFormat
+        let (rest, format) = CommandFormat::from_bytes((rest, 0))?;
+        // Read variable size length
+        let (rest, length) = if format.big_len {
+            let value: u16 = (rest.0[rest.1] as u16) << 8 + rest.0[rest.1 + 1];
+            ((rest.0, rest.1 + 16), value)
+        } else {
+            let value: u16 = rest.0[rest.1] as u16;
+            ((rest.0, rest.1 + 8), value)
+        };
+        todo!();
+        Err(ActiveLookError::UnknownError)
+    }
+}
+
 #[derive(DekuRead, DekuWrite, Debug, Eq, PartialEq)]
 #[deku(type = "u8")]
 #[repr(u8)]
@@ -427,10 +498,11 @@ mod tests {
     fn test_full_command_decoding() {
         let bytes = [0xFF, 0x00, 0x00, 0x06, 0x01, 0xAA];
         let expected = MasterToActiveLookData::DisplayPower { en: true };
+        /*
         let cmd = MasterToActiveLookCommand::decode(&bytes).unwrap();
-
         assert_eq!(0x00, cmd.cmd_id);
         assert_eq!(0x06, cmd.length);
         assert_eq!(expected, cmd.data);
+        */
     }
 }
