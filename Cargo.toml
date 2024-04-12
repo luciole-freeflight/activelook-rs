@@ -9,3 +9,5 @@ edition = "2021"
 binary-layout = "4.0.1"
 binrw = "0.13.3"
 deku = "0.16.0"
+bitvec = "1.0.1" # Same as deku
+thiserror = "1.0.58"

@@ -1,8 +1,120 @@
-use binary_layout::prelude::*;
+use bitvec::prelude::*;
 /// ActiveLook commands
+///
+///
+///
+use thiserror::Error;
+//use deku::bitvec::{BitSlice, BitVec, Msb0};
 use deku::prelude::*;
 
-#[derive(DekuRead, DekuWrite, Debug, Eq, PartialEq)]
+#[derive(Error, Debug)]
+pub enum ActiveLookError {
+    #[error("Incorrectly delimited bytestream (expected 0xFF ... 0xAA)")]
+    DelimiterError,
+}
+
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct CommandFormat {
+    #[deku(pad_bits_before = "3", bits = 1)]
+    big_len: bool,
+    #[deku(bits = 4)]
+    query_id_len: u8,
+}
+
+/// ActiveLook Command packet
+/// There are two types of packets :
+/// - with 1 byte length field
+/// - with 2 bytes length field
+///
+/// optionally, the packets can have a query_id field.
+/// The size is defined in the command_format field.
+///
+///
+/// | 0xFF   | 0x..       | 0x0n           | 0x..        | n * 0x…   | m * 0x…        | 0xAA   |
+/// |--------|------------|----------------|-------------|-----------|----------------|--------|
+/// | Start  | Command ID | Command Format | Length      | Query ID  | Data           | Footer |
+/// | 1B     | 1B         | 1B             | 1B          | nB        | mB             | 1B     |
+///
+///
+/// | 0xFF   | 0x..       | 0x1n           | 0x.. 0x..   | n * 0x…  | m * 0x…        | 0xAA   |
+/// |--------|------------|----------------|-------------|----------|----------------|--------|
+/// | Start  | Command ID | Command Format | Length      | Query ID | Data           | Footer |
+/// | 1B     | 1B         | 1B             | 2B          | nB       | mB             | 1B     |
+///
+///
+
+/// Delimitation by 0xFF ... 0xAA : Done in helper functions
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct MasterToActiveLookCommand {
+    cmd_id: u8,
+    cmd_format: CommandFormat,
+    #[deku(
+        reader = "MasterToActiveLookCommand::read_len(deku::rest, cmd_format.big_len)",
+        writer = "MasterToActiveLookCommand::write_len(deku::output, *length)"
+    )]
+    length: u16,
+    #[deku(count = "cmd_format.query_id_len")]
+    query_id: Vec<u8>,
+    #[deku(ctx = "*cmd_id, length - 5 - (cmd_format.query_id_len as u16)")]
+    data: MasterToActiveLookData,
+}
+
+impl MasterToActiveLookCommand {
+    /// Decode an ActiveLook-delimited buffer into a Command
+    fn decode(bytes: &[u8]) -> Result<Self, ActiveLookError> {
+        if let Some((start, rest)) = bytes.split_first() {
+            if start != &0xFF {
+                return Err(ActiveLookError::DelimiterError);
+            }
+            if let Some((end, rest)) = rest.split_last() {
+                if end != &0xAA {
+                    return Err(ActiveLookError::DelimiterError);
+                }
+
+                if let Ok((_rest, cmd)) = MasterToActiveLookCommand::from_bytes((rest, 0)) {
+                    return Ok(cmd);
+                }
+            }
+        }
+        Err(ActiveLookError::DelimiterError)
+    }
+
+    /*
+    fn encode(self) -> Vec<u8> {
+        let mut bytes = BitVec::new();
+        self.data.to_bytes()
+    }
+    */
+
+    /// Read the viariable-size length field
+    fn read_len(
+        rest: &BitSlice<u8, Msb0>,
+        big_len: bool,
+    ) -> Result<(&BitSlice<u8, Msb0>, u16), DekuError> {
+        let (rest, value) = if big_len {
+            u16::read(rest, ())?
+        } else {
+            let (rest, u8value) = u8::read(rest, ())?;
+            (rest, u8value as u16)
+        };
+        Ok((rest, value))
+    }
+
+    /// Write the variable-size length field
+    fn write_len(output: &mut BitVec<u8, Msb0>, length: u16) -> Result<(), DekuError> {
+        if length > 255 {
+            length.write(output, ())
+        } else {
+            let u8length = length as u8;
+            u8length.write(output, ())
+        }
+    }
+}
+
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Eq, PartialEq)]
 #[deku(type = "u8")]
 #[repr(u8)]
 pub enum LedState {
@@ -16,7 +128,8 @@ pub enum LedState {
     Blinking,
 }
 
-#[derive(DekuRead, DekuWrite, Debug, Eq, PartialEq)]
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Eq, PartialEq)]
 #[deku(type = "u8")]
 #[repr(u8)]
 pub enum DeviceInfo {
@@ -56,7 +169,8 @@ pub enum DeviceInfo {
     Certification6,
 }
 
-#[derive(DekuRead, DekuWrite, Debug, Eq, PartialEq)]
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Eq, PartialEq)]
 #[deku(type = "u8")]
 #[repr(u8)]
 pub enum CmdError {
@@ -73,10 +187,11 @@ pub enum CmdError {
     ProtocolDecoding,
 }
 
-#[derive(DekuRead, DekuWrite, Debug, Eq, PartialEq)]
-#[deku(type = "u8")]
+#[deku_derive(DekuRead, DekuWrite)]
+#[derive(Debug, Eq, PartialEq)]
+#[deku(ctx = "cmd_id: u8, _len: u16", id = "cmd_id")]
 #[repr(u8)]
-pub enum MasterToActiveLook {
+pub enum MasterToActiveLookData {
     ///
     /// Enable / disable power of the display
     #[deku(id = "0x00")]
@@ -150,8 +265,7 @@ pub enum MasterToActiveLook {
         rotation: u8,
         font_size: u8,
         color: u8,
-        // string: [u8; 255], // XXX the trait `general::_::_serde::Deserialize<'_>` is not implemented for `[u8; 255]55]`
-        string: [u8; 32],
+        string: [u8; 255],
     },
     /// Draw multiple connected lines at the corresponding coordinates.
     /// Size: 3 + (n+1) * 4
@@ -292,51 +406,31 @@ pub enum ActiveLookToMaster {
     DevInfo { parameter: u8 },
 }
 
-mod test_binary_layout {
-    use binary_layout::prelude::*;
-
-    binary_layout!(graphics_txt, BigEndian, {
-        x: i16,
-        y: i16,
-        r: u8,
-        f: u8,
-        c: u8,
-        string: [u8], // open ended byte array, matches until the end of the packet
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_encoding() {
-        let cmd = MasterToActiveLook::DisplayPower { en: true };
-        let expected: &[u8] = &[0, 1];
+    fn test_command_format() {
+        let bytes = [0b000_1_0011u8];
+        let expected = CommandFormat {
+            big_len: true,
+            query_id_len: 3,
+        };
 
-        let bytes = cmd.to_bytes().unwrap();
-        assert_eq!(expected, bytes);
+        let (rest, decoded) = CommandFormat::from_bytes((&bytes[..], 0)).unwrap();
 
-        let decoded = MasterToActiveLook::try_from(expected).unwrap();
-        assert_eq!(decoded, cmd);
+        assert_eq!(expected, decoded);
     }
 
     #[test]
-    fn test_binary_layout_txt() {
-        let bytes = &[0, 0, 0, 0, 0, 8, 42, 0x30, 0x31, 0x32, 0];
-        let view = test_binary_layout::graphics_txt::View::new(bytes);
+    fn test_full_command_decoding() {
+        let bytes = [0xFF, 0x00, 0x00, 0x06, 0x01, 0xAA];
+        let expected = MasterToActiveLookData::DisplayPower { en: true };
+        let cmd = MasterToActiveLookCommand::decode(&bytes).unwrap();
 
-        let mut memory = [0u8; 255];
-
-        println!("Size {:?}", test_binary_layout::graphics_txt::SIZE);
-        let mut expected = test_binary_layout::graphics_txt::View::new(memory);
-        expected.x_mut().write(0);
-        expected.y_mut().write(0);
-        expected.r_mut().write(0);
-        expected.f_mut().write(8);
-        expected.c_mut().write(42);
-        expected.string_mut().copy_from_slice(b"123\0");
-
-        assert_eq!(bytes, &memory[..bytes.len()]);
+        assert_eq!(0x00, cmd.cmd_id);
+        assert_eq!(0x06, cmd.length);
+        assert_eq!(expected, cmd.data);
     }
 }
