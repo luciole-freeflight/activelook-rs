@@ -38,7 +38,8 @@ use bitvec::prelude::*;
 /// hand-crafted top-level API.
 ///
 use thiserror::Error;
-//use deku::bitvec::{BitSlice, BitVec, Msb0};
+// We use [deku](https://docs.rs/deku) for now.
+// TODO Try [binrw](https://binrw.rs/)
 use deku::prelude::*;
 
 #[derive(Error, Debug)]
