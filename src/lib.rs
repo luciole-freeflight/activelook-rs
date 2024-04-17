@@ -1,15 +1,10 @@
-//pub mod commands;
-
-pub mod commands {
-    pub struct PowerDisplay {
-        en: bool,
-    }
-}
-
-pub trait Command {}
+//#![feature(trait_alias)]
+pub mod commands;
+use crate::commands::{Command, Response};
 
 pub trait ActiveLookClient {
-    fn send(cmd: impl Command);
+    fn send(&self, cmd: Command);
+    fn recv(&self) -> Option<Response>;
 }
 
 /// High level representation for BLE ActiveLook glasses
@@ -23,10 +18,16 @@ impl<C: ActiveLookClient> Glasses<C> {
     }
 
     pub fn display_power(&self, en: bool) {
-        todo!();
+        let cmd = Command::PowerDisplay { en: en as u8 };
+        self.client.send(cmd);
     }
 
     pub fn clear(&self) {
         todo!();
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 }
