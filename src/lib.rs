@@ -3,7 +3,7 @@ pub mod commands;
 use crate::commands::{Command, Response};
 
 pub trait ActiveLookClient {
-    fn send(&self, cmd: Command);
+    fn send(&self, cmd: &Command);
     fn recv(&self) -> Option<Response>;
 }
 
@@ -19,7 +19,7 @@ impl<C: ActiveLookClient> Glasses<C> {
 
     pub fn display_power(&self, en: bool) {
         let cmd = Command::PowerDisplay { en: en as u8 };
-        self.client.send(cmd);
+        self.client.send(&cmd);
     }
 
     pub fn clear(&self) {
@@ -30,4 +30,24 @@ impl<C: ActiveLookClient> Glasses<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct TestClient;
+    impl ActiveLookClient for TestClient {
+        fn send(&self, cmd: &Command) {
+            println!("Sending command {} {:?}", cmd.id(), cmd);
+        }
+
+        fn recv(&self) -> Option<Response> {
+            todo!();
+        }
+    }
+
+    #[test]
+    fn test_display() {
+        let client = TestClient {};
+        let glasses = Glasses::new(client);
+
+        glasses.display_power(true);
+        assert!(false);
+    }
 }
