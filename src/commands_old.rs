@@ -163,8 +163,7 @@ pub enum LedState {
     Blinking,
 }
 
-#[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(type = "u8")]
 #[repr(u8)]
 pub enum DeviceInfo {

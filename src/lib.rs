@@ -1,6 +1,6 @@
 //#![feature(trait_alias)]
 pub mod commands;
-use crate::commands::{Command, Response};
+use crate::commands::{Command, Deserializable, Response, Serializable};
 
 pub trait ActiveLookClient {
     fn send(&self, cmd: &Command);
