@@ -67,8 +67,10 @@ pub trait Deserializable {
 }
 
 // ---------------------------------------------------------------------------
-// All commands
+// All command and response items
 // ---------------------------------------------------------------------------
+/// Magic value denoting that ALL elements are concerned by the command
+pub const ALL: u8 = 0xFF;
 
 /// Errors returned by ActiveLook glasses
 #[deku_derive(DekuRead, DekuWrite)]
@@ -158,12 +160,13 @@ pub enum DeviceInfo {
     Certification6,
 }
 
-/// Hold or Flush the graphic engine.
+/// Hold or Flush the graphic engine.  
+///
 /// When held, new display commands are stored in memory and are displayed when the graphic engine
 /// is flushed. This allows stacking multiple graphic operations and displaying them simultaneously
-/// without screen flickering.
-/// The command is nested, the [HoldFlush::Flush] action must be used the same number of times
-/// [HoldFlush::Hold] was used.
+/// without screen flickering.  
+/// The command is nested, the [HoldFlushAction::Flush] action must be used the same number of times
+/// [HoldFlushAction::Hold] was used.
 #[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(type = "u8")]
 #[repr(u8)]
@@ -183,42 +186,52 @@ pub enum HoldFlushAction {
 /// Common Point type used globally in commands
 #[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 pub struct Point {
-    x: i16,
-    y: i16,
+    pub x: i16,
+    pub y: i16,
 }
 
 /// List item returned in [Response::ImgList]
 #[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 pub struct ImgListItem {
-    id: u8,
-    height: u16,
-    width: u16,
+    pub id: u8,
+    pub height: u16,
+    pub width: u16,
 }
 
 /// Font item used in [Response::FontList]
 #[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 pub struct FontItem {
-    id: u8,
-    height: u8,
+    pub id: u8,
+    pub height: u8,
 }
 
 /// Configuration item used in [Response::CfgList]
 #[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 pub struct CfgItem {
     /// Name of the configuration
-    name: [u8; 12],
+    pub name: [u8; 12],
     /// Size in bytes
-    size: u32,
+    pub size: u32,
     /// Provided by user
-    version: u32,
+    pub version: u32,
     /// Used to sort configurations, most recent used configuration have higher values
-    usage_counter: u8,
+    pub usage_counter: u8,
     /// Used to sort configurations, most recent installed configuration have higher values
-    install_counter: u8,
+    pub install_counter: u8,
     /// Indicate system configuration, can't be deleted.
-    is_system: u8,
+    pub is_system: u8,
 }
 
+/// Layout position item used in [Command::LayoutPosition] for instance
+#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+pub struct LayoutPosition {
+    pub x: u16,
+    pub y: u8,
+}
+
+// ---------------------------------------------------------------------------
+// All commands
+// ---------------------------------------------------------------------------
 /// These map to the commands MasterToActiveLook
 #[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(type = "u8")]
@@ -384,7 +397,81 @@ pub enum Command {
     FontDelete { id: u8 },
 
     // --- Layout commands ---
+    /// Save a layout. TODO
+    #[deku(id = "0x60")]
+    LayoutSave,
+    /// Delete a layout. If `id` = 0xFF, delete all layouts.
+    #[deku(id = "0x61")]
+    LayoutDelete { id: u8 },
+    /// Display `text` with layout `id` parameters.
+    #[deku(id = "0x62")]
+    LayoutDisplay { id: u8, text: [u8; 255] },
+    /// Clear screen of the corresponding layout area
+    #[deku(id = "0x63")]
+    LayoutClear { id: u8 },
+    /// Give the list of saved layouts
+    #[deku(id = "0x64")]
+    LayoutList,
+    /// Redefine the position of a layout.
+    /// The position is saved.
+    #[deku(id = "0x65")]
+    LayoutPosition { id: u8, pos: LayoutPosition },
+    /// Display `text` with layout `id` at the given position.
+    /// The position is not saved.
+    #[deku(id = "0x66")]
+    LayoutDisplayExtended {
+        id: u8,
+        pos: LayoutPosition,
+        text: [u8; 255],
+        /// Extra commands with the same format as [Commands::LayoutSave]
+        #[deku(read_all)]
+        extra_cmd: Vec<u8>,
+    },
+    /// Get a layout parameters
+    #[deku(id = "0x67")]
+    LayoutGet { id: u8 },
+    /// Clear screen of the corresponding layout area
+    #[deku(id = "0x68")]
+    LayoutClearExtended { id: u8, pos: LayoutPosition },
+    /// Clear area and display `text` with layout `id` parameters
+    #[deku(id = "0x69")]
+    LayoutClearAndDisplay { id: u8, text: [u8; 255] },
+    /// Clear area and display `text` with layout `id` parameters at given position
+    #[deku(id = "0x6A")]
+    LayoutClearAndDisplayExtended {
+        id: u8,
+        pos: LayoutPosition,
+        text: [u8; 255],
+        /// Extra commands with the same format as [Commands::LayoutSave]
+        #[deku(read_all)]
+        extra_cmd: Vec<u8>,
+    },
+
     // --- Gauge commands ---
+    /// Display value (in percentage) of the gauge
+    #[deku(id = "0x70")]
+    GaugeDisplay { id: u8, value: u8 },
+    /// Save the parameters for gauge `id`
+    #[deku(id = "0x71")]
+    GaugeSave {
+        id: u8,
+        pos: Point,
+        radius: u16,
+        inner: u16,
+        start: u8,
+        end: u8,
+        clockwise: u8,
+    },
+    /// Delete a gauge. if `id` = [ALL], delete all gauges
+    #[deku(id = "0x72")]
+    GaugeDelete { id: u8 },
+    /// Give the list of saved gauges
+    #[deku(id = "0x73")]
+    GaugeList,
+    /// Get a gauge parameters
+    #[deku(id = "0x74")]
+    GaugeGet { id: u8 },
+
     // --- Page commands ---
     // --- Animation commands ---
     /// save an animation
@@ -555,6 +642,7 @@ pub enum Response {
         als_enable: u8,
         gesture_enable: u8,
     },
+
     // --- Image commands ---
     /// List images in memory. `height` and `width` are in pixels. Listing is not sorted.
     #[deku(id = "0x47")]
@@ -562,6 +650,7 @@ pub enum Response {
         #[deku(read_all)]
         list: Vec<ImgListItem>,
     },
+
     // --- Fonts commands ---
     /// List of font in memory, with their height. Listing is not sorted.
     #[deku(id = "0x50")]
@@ -569,8 +658,37 @@ pub enum Response {
         #[deku(read_all)]
         list: Vec<FontItem>,
     },
+
     // --- Layout commands ---
+    /// List of layouts in memory. Listing is not sorted.
+    #[deku(id = "0x64")]
+    LayoutList {
+        #[deku(read_all)]
+        list: Vec<u8>,
+    },
+    /// Layout parameters without `id`
+    /// TODO
+    #[deku(id = "0x67")]
+    LayoutGet,
+
     // --- Gauge commands ---
+    /// List of gauges in memory. Not sorted.
+    #[deku(id = "0x73")]
+    GaugeList {
+        #[deku(read_all)]
+        list: Vec<u8>,
+    },
+    /// Gauge parameters without `id`
+    #[deku(id = "0x74")]
+    GaugeGet {
+        pos: Point,
+        radius: u16,
+        inner: u16,
+        start: u8,
+        end: u8,
+        clockwise: u8,
+    },
+
     // --- Page commands ---
     // --- Animation commands ---
     /// List of animations in memory. Listing is not sorted.
