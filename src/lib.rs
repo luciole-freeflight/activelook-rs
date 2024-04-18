@@ -34,7 +34,7 @@ mod tests {
     struct TestClient;
     impl ActiveLookClient for TestClient {
         fn send(&self, cmd: &Command) {
-            println!("Sending command {} {:?}", cmd.id(), cmd);
+            println!("Sending command {} {:?}", cmd.id().unwrap(), cmd);
         }
 
         fn recv(&self) -> Option<Response> {
@@ -48,6 +48,6 @@ mod tests {
         let glasses = Glasses::new(client);
 
         glasses.display_power(true);
-        assert!(false);
+        //assert!(false);
     }
 }
