@@ -213,6 +213,34 @@ pub struct LayoutPosition {
     pub x: u16,
     pub y: u8,
 }
+
+/// Layout parameters
+#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+pub struct LayoutParameters {
+    /// Size of additional commands in bytes
+    size: u8,
+    /// Upper left clipping region in the display
+    pos: LayoutPosition,
+    /// Width of the clipping region
+    width: u16,
+    /// Height of the clipping region
+    height: u8,
+    /// Foreground color (0..15)
+    fore_color: u8,
+    /// Background color (0..15)
+    back_color: u8,
+    font: u8,
+    text_valid: u8,
+    /// Test position in the clipping region
+    text_pos: LayoutPosition,
+    text_rotation: u8,
+    /// If true, the background of each character should be drawn.
+    /// Else, it leaves the background as is
+    text_opacity: u8,
+    /// Additional graphical commands
+    #[deku(count = "size")]
+    commands: Vec<u8>,
+}
 // ---------------------------------------------------------------------------
 // Deku readers and writers
 // ---------------------------------------------------------------------------
@@ -420,9 +448,13 @@ pub enum Command {
     FontDelete { id: u8 },
 
     // --- Layout commands ---
-    /// Save a layout. TODO
+    /// Save a layout.
     #[deku(id = "0x60")]
-    LayoutSave,
+    LayoutSave {
+        /// Layout number
+        id: u8,
+        params: LayoutParameters,
+    },
     /// Delete a layout. If `id` = 0xFF, delete all layouts.
     #[deku(id = "0x61")]
     LayoutDelete { id: u8 },
@@ -518,6 +550,31 @@ pub enum Command {
     GaugeGet { id: u8 },
 
     // --- Page commands ---
+    /// Save a page of layouts
+    /// TODO
+    #[deku(id = 0x80)]
+    PageSave,
+    /// Get a page
+    #[deku(id = 0x81)]
+    PageGet { id: u8 },
+    /// Delete a page. If `id` = 0xFF, delete all pages.
+    #[deku(id = 0x82)]
+    PageDelete { id: u8 },
+    /// Display a page, each string are NUL separated
+    /// TODO
+    #[deku(id = 0x83)]
+    PageDisplay { id: u8 },
+    /// Clear screen of the corresponding page area
+    #[deku(id = 0x84)]
+    PageClear { id: u8 },
+    /// List pages in memory
+    #[deku(id = 0x85)]
+    PageList,
+    /// Clear area and display a page, each string are NUL separated
+    /// TODO
+    #[deku(id = 0x86)]
+    PageClearAndDisplay { id: u8 },
+
     // --- Animation commands ---
     /// save an animation
     #[deku(id = "0x95")]
@@ -742,9 +799,8 @@ pub enum Response {
         list: Vec<u8>,
     },
     /// Layout parameters without `id`
-    /// TODO
     #[deku(id = "0x67")]
-    LayoutGet,
+    LayoutGet { params: LayoutParameters },
 
     // --- Gauge commands ---
     /// List of gauges in memory. Not sorted.
@@ -765,6 +821,16 @@ pub enum Response {
     },
 
     // --- Page commands ---
+    /// Page with layout parameters
+    #[deku(id = "0x81")]
+    PageGet { id: u8 },
+    /// List of page IDs in memory. Listing is not sorted
+    #[deku(id = 0x85)]
+    PageList {
+        #[deku(read_all)]
+        list: Vec<u8>,
+    },
+
     // --- Animation commands ---
     /// List of animations in memory. Listing is not sorted.
     #[deku(id = "0x99")]
@@ -918,6 +984,12 @@ mod tests {
 
         let cmd = Command::from_data(0x62, bytes).unwrap();
         assert_eq!(expected, cmd);
+
+        // how to access the returned value
+        match cmd {
+            Command::LayoutDisplay { id, text } => assert_eq!(text, "012"),
+            _ => assert!(false),
+        }
     }
 
     #[test]
