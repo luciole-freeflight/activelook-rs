@@ -4,49 +4,24 @@
 //! We want an easy mapping between the bytes we send/receive to the glasses, and the logical
 //! representation in Rust.
 //!
-//! ActiveLook Command packet
-//! There are two types of packets :
-//! - with 1 byte length field
-//! - with 2 bytes length field
-//!
-//! optionally, the packets can have a query_id field.
-//! The size is defined in the command_format field.
-//!
-//!
-//! | 0xFF   | 0x..       | 0x0n           | 0x..        | n * 0x…   | m * 0x…        | 0xAA   |
-//! |--------|------------|----------------|-------------|-----------|----------------|--------|
-//! | Start  | Command ID | Command Format | Length      | Query ID  | Data           | Footer |
-//! | 1B     | 1B         | 1B             | 1B          | nB        | mB             | 1B     |
-//! |--------|------------|----------------|-------------|-----------|----------------|--------|
-//! | Marker | Application| Protocol       | Protocol    | Protocol  | Application    | Marker |
-//! |--------|------------|----------------|-------------|-----------|----------------|--------|
-//! |   -    | X          | -              | -           | X         | X              | -      |
-//!
-//!
-//! | 0xFF   | 0x..       | 0x1n           | 0x.. 0x..   | n * 0x…  | m * 0x…        | 0xAA   |
-//! |--------|------------|----------------|-------------|----------|----------------|--------|
-//! | Start  | Command ID | Command Format | Length      | Query ID | Data           | Footer |
-//! | 1B     | 1B         | 1B             | 2B          | nB       | mB             | 1B     |
-//!
 //! We could use Enums, but when serializing the discriminant is put immediately before the data.
 //!
 //! In ActiveLook protocol, this is not the case:
 //! - The Enum discriminant corresponds to Command ID.
 //! - The Enum data lives after the protocol encoding (format, length, etc.)
 //!
-//! In other terms, the useful payload is split in two. Classic de/serialization crates like
-//! `binrw`, `deku` and so on can not do this in a simple way.
+//! In other terms, the useful payload is split in two.
+//! Classic de/serialization crates like `binrw`, `deku` and so on can not do this in a simple way.
 //!
 //! So we will use:
-//! - hand-crafted de/serialization traits and implementations
-//! - an enum for CommandID
+//! - `deku` Enums plus de/serialization traits and implementations
 //! - a lower-level protocol handling the serialization, Query ID etc.
 //!
 //use binrw::{binrw, io::Cursor, BinRead, BinWrite};
 use deku::bitvec::{BitSlice, BitVec, Msb0};
 use deku::ctx::BitSize;
 use deku::prelude::*;
-//use deku::reader::Reader;
+use deku::reader::Reader;
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
@@ -71,6 +46,12 @@ pub trait Deserializable {
 // ---------------------------------------------------------------------------
 /// Magic value denoting that ALL elements are concerned by the command
 pub const ALL: u8 = 0xFF;
+
+/// Max size for Layout names
+pub const NAME_LEN: usize = 12;
+
+/// Max size for free text
+pub const TEXT_LEN: usize = 255;
 
 /// Errors returned by ActiveLook glasses
 #[deku_derive(DekuRead, DekuWrite)]
@@ -209,7 +190,11 @@ pub struct FontItem {
 #[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 pub struct CfgItem {
     /// Name of the configuration
-    pub name: [u8; 12],
+    #[deku(
+        reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
+        writer = "write_fixed_size_cstr(name, deku::output, NAME_LEN)"
+    )]
+    pub name: String,
     /// Size in bytes
     pub size: u32,
     /// Provided by user
@@ -227,6 +212,40 @@ pub struct CfgItem {
 pub struct LayoutPosition {
     pub x: u16,
     pub y: u8,
+}
+// ---------------------------------------------------------------------------
+// Deku readers and writers
+// ---------------------------------------------------------------------------
+/// Read a fixed-len slice containing a 0-delimited C string.
+/// The 0 is optional in the input if the max `len` is reached
+fn read_fixed_size_cstr<R: deku::no_std_io::Read>(
+    reader: &mut Reader<R>,
+    len: usize,
+) -> Result<String, DekuError> {
+    let mut res = String::new();
+    for _ in 0..len {
+        let val = u8::from_reader_with_ctx(reader, BitSize(8))?;
+        if val == '\0' as u8 {
+            break;
+        }
+        res.push(val as char);
+    }
+    Ok(res)
+}
+
+fn write_fixed_size_cstr(
+    string: &String,
+    output: &mut BitVec<u8, Msb0>,
+    len: usize,
+) -> Result<(), DekuError> {
+    let mut string = string.clone();
+    string.truncate(len as usize);
+    let s = string.as_bytes();
+    s.write(output, BitSize(8))?;
+    if s.len() < len {
+        0u8.write(output, BitSize(8))?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +330,11 @@ pub enum Command {
         rotation: u8,
         font_size: u8,
         color: u8,
-        string: [u8; 255],
+        #[deku(
+            reader = "read_fixed_size_cstr(deku::reader, TEXT_LEN)",
+            writer = "write_fixed_size_cstr(string, deku::output, TEXT_LEN)"
+        )]
+        string: String,
     },
     /// Draw multiple connected lines at the corresponding coordinates.
     /// Size: 3 + (n+1) * 4
@@ -405,7 +428,14 @@ pub enum Command {
     LayoutDelete { id: u8 },
     /// Display `text` with layout `id` parameters.
     #[deku(id = "0x62")]
-    LayoutDisplay { id: u8, text: [u8; 255] },
+    LayoutDisplay {
+        id: u8,
+        #[deku(
+            reader = "read_fixed_size_cstr(deku::reader, TEXT_LEN)",
+            writer = "write_fixed_size_cstr(text, deku::output, TEXT_LEN)"
+        )]
+        text: String,
+    },
     /// Clear screen of the corresponding layout area
     #[deku(id = "0x63")]
     LayoutClear { id: u8 },
@@ -422,7 +452,11 @@ pub enum Command {
     LayoutDisplayExtended {
         id: u8,
         pos: LayoutPosition,
-        text: [u8; 255],
+        #[deku(
+            reader = "read_fixed_size_cstr(deku::reader, TEXT_LEN)",
+            writer = "write_fixed_size_cstr(text, deku::output, TEXT_LEN)"
+        )]
+        text: String,
         /// Extra commands with the same format as [Commands::LayoutSave]
         #[deku(read_all)]
         extra_cmd: Vec<u8>,
@@ -435,13 +469,24 @@ pub enum Command {
     LayoutClearExtended { id: u8, pos: LayoutPosition },
     /// Clear area and display `text` with layout `id` parameters
     #[deku(id = "0x69")]
-    LayoutClearAndDisplay { id: u8, text: [u8; 255] },
+    LayoutClearAndDisplay {
+        id: u8,
+        #[deku(
+            reader = "read_fixed_size_cstr(deku::reader, TEXT_LEN)",
+            writer = "write_fixed_size_cstr(text, deku::output, TEXT_LEN)"
+        )]
+        text: String,
+    },
     /// Clear area and display `text` with layout `id` parameters at given position
     #[deku(id = "0x6A")]
     LayoutClearAndDisplayExtended {
         id: u8,
         pos: LayoutPosition,
-        text: [u8; 255],
+        #[deku(
+            reader = "read_fixed_size_cstr(deku::reader, TEXT_LEN)",
+            writer = "write_fixed_size_cstr(text, deku::output, TEXT_LEN)"
+        )]
+        text: String,
         /// Extra commands with the same format as [Commands::LayoutSave]
         #[deku(read_all)]
         extra_cmd: Vec<u8>,
@@ -527,7 +572,11 @@ pub enum Command {
     #[deku(id = "0xD0")]
     CfgWrite {
         /// Name of the configuration
-        name: [u8; 12],
+        #[deku(
+            reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
+            writer = "write_fixed_size_cstr(name, deku::output, NAME_LEN)"
+        )]
+        name: String,
         /// Provided by the user for tracking versions
         version: u32,
         /// If the configuration already exists, the same password must be provided as the one
@@ -536,22 +585,48 @@ pub enum Command {
     },
     /// Get the number of elements stored in the configuration
     #[deku(id = "0xD1")]
-    CfgRead { name: [u8; 12] },
+    CfgRead {
+        #[deku(
+            reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
+            writer = "write_fixed_size_cstr(name, deku::output, NAME_LEN)"
+        )]
+        name: String,
+    },
     /// Select the current configuration used to display layouts, images, etc.
     #[deku(id = "0xD2")]
-    CfgSet { name: [u8; 12] },
+    CfgSet {
+        #[deku(
+            reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
+            writer = "write_fixed_size_cstr(name, deku::output, NAME_LEN)"
+        )]
+        name: String,
+    },
     #[deku(id = "0xD3")]
     CfgList,
     /// Rename a configuration
     #[deku(id = "0xD4")]
     CfgRename {
-        old: [u8; 12],
-        new: [u8; 12],
+        #[deku(
+            reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
+            writer = "write_fixed_size_cstr(old, deku::output, NAME_LEN)"
+        )]
+        old: String,
+        #[deku(
+            reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
+            writer = "write_fixed_size_cstr(new, deku::output, NAME_LEN)"
+        )]
+        new: String,
         password: u32,
     },
     /// Delete a configuration and all elements associated
     #[deku(id = "0xD5")]
-    CfgDelete { name: [u8; 12] },
+    CfgDelete {
+        #[deku(
+            reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
+            writer = "write_fixed_size_cstr(name, deku::output, NAME_LEN)"
+        )]
+        name: String,
+    },
     /// Delete the configuration that has not been used for the longest time
     #[deku(id = "0xD6")]
     CfgDeleteLessUsed,
@@ -826,5 +901,36 @@ mod tests {
         // Deserialization
         let res = Response::from_data(0xE3, &bytes).unwrap();
         assert_eq!(expected, res);
+    }
+
+    #[test]
+    fn test_fixed_string_short() {
+        let bytes: &[u8] = &[
+            42, // id
+            0x30, 0x31, 0x32, 0x00, // text
+        ];
+        let expected = Command::LayoutDisplay {
+            id: 42,
+            text: String::from("012"),
+        };
+        let data = expected.data_bytes().unwrap();
+        assert_eq!(bytes, data);
+
+        let cmd = Command::from_data(0x62, bytes).unwrap();
+        assert_eq!(expected, cmd);
+    }
+
+    #[test]
+    fn test_fixed_string_exact() {
+        let bytes: &[u8] = &[0x30; TEXT_LEN + 1];
+        let expected = Command::LayoutDisplay {
+            id: 0x30,
+            text: String::from_utf8(vec![0x30; TEXT_LEN]).unwrap(),
+        };
+        let data = expected.data_bytes().unwrap();
+        assert_eq!(bytes, data);
+
+        let cmd = Command::from_data(0x62, bytes).unwrap();
+        assert_eq!(expected, cmd);
     }
 }

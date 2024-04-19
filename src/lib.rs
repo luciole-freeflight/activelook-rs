@@ -1,5 +1,6 @@
 //#![feature(trait_alias)]
 pub mod commands;
+pub mod test_cstr;
 use crate::commands::{Command, Deserializable, Response, Serializable};
 
 pub trait ActiveLookClient {
