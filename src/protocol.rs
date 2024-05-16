@@ -72,9 +72,9 @@ pub struct Packet<T> {
     cmd_id: u8,
     format: CmdFormat,
     length: i16,
-    query_id: Option<Vec<u8>>,
+    pub query_id: Option<Vec<u8>>,
     /// Contains the application payload: [Command] or [Response]
-    data: T,
+    pub data: T,
 }
 
 /// Packet containing raw bytes
