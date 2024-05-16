@@ -67,20 +67,28 @@ impl Default for CmdFormat {
     }
 }
 
+/// An ActiveLook BLE packet
 pub struct Packet<T> {
     cmd_id: u8,
     format: CmdFormat,
     length: i16,
     query_id: Option<Vec<u8>>,
+    /// Contains the application payload: [Command] or [Response]
     data: T,
 }
 
-pub type RawPacket = Packet<Option<&'static [u8]>>;
-pub type CommandPacket = Packet<Command>;
-pub type ResponsePacket = Packet<Command>;
+/// Packet containing raw bytes
+pub type RawPacket<'a> = Packet<Option<&'a [u8]>>;
 
-impl RawPacket {
-    pub fn from_bytes(data: &[u8]) -> Result<Self, ProtocolError> {
+/// Packet embedding a [Command]
+pub type CommandPacket = Packet<Command>;
+
+/// Packet embedding a [Response]
+pub type ResponsePacket = Packet<Response>;
+
+impl<'a> RawPacket<'a> {
+    /// Construct a Packet from raw bytes
+    pub fn from_bytes(data: &'a [u8]) -> Result<Self, ProtocolError> {
         if data.len() < PACKET_MIN_SIZE {
             return Err(ProtocolError::PacketLengthTooSmall);
         }
@@ -102,7 +110,8 @@ impl RawPacket {
         index += 1;
 
         // Length
-        let mut length: i16 = if cmd_format.long == 1 {
+        // Total length of the packet, including the start and stop delimiters.
+        let length: i16 = if cmd_format.long == 1 {
             let len = i16::from_be_bytes(data[index..index + 1].try_into().unwrap());
             index += 2;
             len
@@ -124,7 +133,17 @@ impl RawPacket {
         index += cmd_format.query_id_size;
 
         // Data
-        let data = None;
+        let data_len = length as usize
+            -2 // delimiters 
+            -1 // cmd_id
+            -1 // cmd_format
+            -cmd_format.query_id_size
+            -1; // length
+
+        let data = match data_len {
+            0 => None,
+            len => Some(&data[index..index + len]),
+        };
 
         Ok(Packet {
             cmd_id,
@@ -137,13 +156,13 @@ impl RawPacket {
 }
 
 impl CommandPacket {
-    pub fn from_bytes(data: &[u8]) -> Result<Self, ProtocolError> {
+    pub fn from_bytes<'a>(data: &'a [u8]) -> Result<Self, ProtocolError> {
         let raw = RawPacket::from_bytes(data)?;
-        todo!()
+        Ok(Self::from(raw))
     }
 }
 
-impl From<RawPacket> for CommandPacket {
+impl From<RawPacket<'_>> for CommandPacket {
     fn from(raw: RawPacket) -> Self {
         Self {
             cmd_id: raw.cmd_id,
@@ -152,6 +171,77 @@ impl From<RawPacket> for CommandPacket {
             query_id: raw.query_id,
             data: Command::from_data(raw.cmd_id, raw.data).expect("Invalid command bytestream"),
         }
+    }
+}
+
+impl ResponsePacket {
+    pub fn from_bytes<'a>(data: &'a [u8]) -> Result<Self, ProtocolError> {
+        let raw = RawPacket::from_bytes(data)?;
+        Ok(Self::from(raw))
+    }
+}
+
+impl From<RawPacket<'_>> for ResponsePacket {
+    fn from(raw: RawPacket) -> Self {
+        Self {
+            cmd_id: raw.cmd_id,
+            format: raw.format,
+            length: raw.length,
+            query_id: raw.query_id,
+            data: Response::from_data(raw.cmd_id, raw.data).expect("Invalid response bytestream"),
+        }
+    }
+}
+
+impl<T> Packet<T>
+where
+    T: Serializable + Deserializable,
+{
+    /// Create a packet from a [Command] or [Response]
+    pub fn new(from: T) -> Self {
+        let mut cmd_format = CmdFormat::default();
+        let mut length: i16 = from.data_bytes().expect("Should have data").len() as i16 + 5;
+        if length > 255 {
+            cmd_format.long = 1;
+            length += 1;
+        }
+        Self {
+            cmd_id: from.id().expect("Should be a valid Command"),
+            format: cmd_format,
+            length,
+            query_id: None,
+            data: from,
+        }
+    }
+
+    /// Create a packet from a [Command] or [Response], with a given query_id
+    pub fn new_with_query_id(from: T, query_id: &[u8]) -> Self {
+        let mut packet = Packet::new(from);
+        packet.query_id = Some(Vec::from(query_id));
+        packet.format.query_id_size = query_id.len();
+        packet.length += packet.format.query_id_size as i16;
+        packet
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut res: Vec<u8> = Vec::new();
+        res.push(0xFF);
+        res.push(self.cmd_id);
+        res.extend(self.format.to_bytes().unwrap());
+
+        if self.length > 255 {
+            res.extend(self.length.to_be_bytes());
+        } else {
+            res.push(self.length as u8);
+        }
+
+        if let Some(query) = &self.query_id {
+            res.extend(query);
+        }
+
+        res.extend(self.data.data_bytes().expect("Should be able to unwrap"));
+        res.push(0xAA);
+        res
     }
 }
 
@@ -186,7 +276,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_raw_to_command_conversion() {
+    fn test_raw_to_command_conversion_without_data() {
         let cmd = Command::Clear;
         let raw = RawPacket {
             cmd_id: cmd.id().unwrap(),
@@ -197,8 +287,94 @@ pub mod tests {
         };
 
         let packet = CommandPacket::from(raw);
+        assert_eq!(packet.cmd_id, 0x01);
+        assert_eq!(packet.data, cmd);
+    }
+
+    #[test]
+    fn test_raw_to_command_conversion_with_data() {
+        let cmd = Command::PowerDisplay { en: 1 };
+        let raw = RawPacket {
+            cmd_id: cmd.id().unwrap(),
+            format: CmdFormat::default(),
+            length: 1,
+            query_id: None,
+            data: Some(&[0x01]),
+        };
+
+        let packet = CommandPacket::from(raw);
+        assert_eq!(packet.cmd_id, 0x00);
+        assert_eq!(packet.data, cmd);
+    }
+
+    #[test]
+    fn test_packet_creation() {
+        let cmd = Command::PowerDisplay { en: 1 };
+        let packet = Packet::new(cmd);
+        assert_eq!(packet.cmd_id, 0x00);
+    }
+
+    #[test]
+    fn test_packet_serialization() {
+        let expected = [0xFF, 0x00, 0x00, 0x06, 0x01, 0xAA];
+        let expected_cmd = Command::PowerDisplay { en: 1 };
+        let cmd = Command::PowerDisplay { en: 1 };
+        let packet = Packet::new(cmd);
+        // Serialization
+        let bytes = packet.to_bytes();
+        assert_eq!(expected, bytes[..]);
+
+        // Deserialization
+        let newpkt = CommandPacket::from_bytes(&bytes).expect("Should be able to deserialize");
+        assert_eq!(expected_cmd, newpkt.data);
     }
 }
 
-// ---------------------------------------------------------------------------
-//pub fn encode(cmd: &Command)
+use embedded_io::{Read, Write, WriteReady};
+
+/// Flow Control: used to prevent the Client Device application from overloading the BLE memory
+/// buffer of the ActiveLook device.
+#[repr(u8)]
+pub enum FlowErrorCtrl {
+    // Flow control
+    /// Client can send data
+    ClientCanSend = 0x01,
+    /// Buffer reaches 75%, the client should stop sending data and wait for value return to 0x01
+    ClientShouldWait = 0x02,
+
+    // Error control
+    /// The command was incomplete or corrupt, the command is ignored
+    MessageError = 0x03,
+    /// Receive message queue overflow
+    MessageQueueOverflow = 0x04,
+    ReservedError = 0x05,
+    /// Missing the `cfgWrite` command before configuration modification
+    MissingCfgWrite = 0x06,
+}
+
+/// Client which uses:
+/// - Connection to Tx Activelook Server (Notify)
+/// - Connection to Rx Activelook Server (Write)
+/// - Connection to Control server (Notify)
+pub struct ActiveLookClient<TxActiveLook, RxActiveLook, Ctrl>
+where
+    TxActiveLook: Read,
+    RxActiveLook: Write + WriteReady,
+    Ctrl: Read,
+{
+    /// Client Rx is connected to ActiveLook Tx
+    rx: TxActiveLook,
+    /// Client Tx is connected to ActiveLook Rx
+    tx: RxActiveLook,
+    ctrl: Ctrl,
+}
+
+/// Protocol implementation
+/// https://github.com/ActiveLook/Activelook-API-Documentation/blob/fw-4.12.0_doc-revA/ActiveLook_API.md#35-control-server
+impl<TxActiveLook, RxActiveLook, Ctrl> ActiveLookClient<TxActiveLook, RxActiveLook, Ctrl>
+where
+    TxActiveLook: Read,
+    RxActiveLook: Write + WriteReady,
+    Ctrl: Read,
+{
+}
