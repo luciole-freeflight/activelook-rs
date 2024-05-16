@@ -14,3 +14,5 @@ bitvec = "1.0.1" # Same as deku
 thiserror = "1.0.58"
 modular-bitfield = "0.11.2"
 cstr_core = "0.2.6"
+log = "0.4.21"
+byteorder = "1.5.0"

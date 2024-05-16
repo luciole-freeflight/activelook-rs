@@ -18,28 +18,12 @@
 //! - a lower-level protocol handling the serialization, Query ID etc.
 //!
 //use binrw::{binrw, io::Cursor, BinRead, BinWrite};
+use crate::traits::*;
 use deku::bitvec::{BitSlice, BitVec, Msb0};
 use deku::ctx::BitSize;
 use deku::prelude::*;
 use deku::reader::Reader;
 use thiserror::Error;
-
-// ---------------------------------------------------------------------------
-// Traits
-// ---------------------------------------------------------------------------
-pub trait Serializable {
-    type Item;
-
-    fn id(&self) -> Result<u8, DekuError>;
-    fn data_bytes(&self) -> Result<Vec<u8>, DekuError>;
-    fn as_bytes(&self) -> Result<(u8, Vec<u8>), DekuError>;
-}
-
-pub trait Deserializable {
-    type Item;
-
-    fn from_data(id: u8, data: &[u8]) -> Result<Self::Item, DekuError>;
-}
 
 // ---------------------------------------------------------------------------
 // All command and response items
@@ -736,9 +720,11 @@ impl Deserializable for Command {
     type Item = Self;
 
     /// Create a Command from the CommandID and data.
-    fn from_data(id: u8, data: &[u8]) -> Result<Self, DekuError> {
+    fn from_data(id: u8, data: Option<&[u8]>) -> Result<Self, DekuError> {
         let mut bytes = vec![id];
-        bytes.extend_from_slice(&data);
+        if let Some(data) = data {
+            bytes.extend_from_slice(&data);
+        }
         let (_rest, cmd) = Command::from_bytes((&bytes, 0))?;
         Ok(cmd)
     }
@@ -916,9 +902,11 @@ impl Deserializable for Response {
     type Item = Self;
 
     /// Create a Command from the CommandID and data.
-    fn from_data(id: u8, data: &[u8]) -> Result<Self, DekuError> {
+    fn from_data(id: u8, data: Option<&[u8]>) -> Result<Self, DekuError> {
         let mut bytes = vec![id];
-        bytes.extend_from_slice(&data);
+        if let Some(data) = data {
+            bytes.extend_from_slice(&data);
+        }
         let (_rest, cmd) = Self::from_bytes((&bytes, 0))?;
         Ok(cmd)
     }
@@ -950,8 +938,17 @@ mod tests {
         assert_eq!(expected[1..], data);
 
         // Deserialization
-        let other = Command::from_data(0x00, &[0x01]).unwrap();
+        let other = Command::from_data(0x00, Some(&[0x01])).unwrap();
         assert_eq!(cmd, other);
+    }
+
+    #[test]
+    fn test_deserialization_no_data() {
+        let bytes = [0x01];
+        let expected = Command::Clear;
+
+        let cmd = Command::from_data(bytes[0], None).unwrap();
+        assert_eq!(expected, cmd);
     }
 
     #[test]
@@ -965,7 +962,7 @@ mod tests {
         assert_eq!(bytes, data);
 
         // Deserialization
-        let res = Response::from_data(0xE3, &bytes).unwrap();
+        let res = Response::from_data(0xE3, Some(&bytes)).unwrap();
         assert_eq!(expected, res);
     }
 
@@ -982,7 +979,7 @@ mod tests {
         let data = expected.data_bytes().unwrap();
         assert_eq!(bytes, data);
 
-        let cmd = Command::from_data(0x62, bytes).unwrap();
+        let cmd = Command::from_data(0x62, Some(bytes)).unwrap();
         assert_eq!(expected, cmd);
 
         // how to access the returned value
@@ -1002,7 +999,7 @@ mod tests {
         let data = expected.data_bytes().unwrap();
         assert_eq!(bytes, data);
 
-        let cmd = Command::from_data(0x62, bytes).unwrap();
+        let cmd = Command::from_data(0x62, Some(bytes)).unwrap();
         assert_eq!(expected, cmd);
     }
 }

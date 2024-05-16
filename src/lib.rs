@@ -1,7 +1,10 @@
 //#![feature(trait_alias)]
 pub mod commands;
+pub mod protocol;
 pub mod test_cstr;
-use crate::commands::{Command, Deserializable, Response, Serializable};
+pub mod traits;
+use crate::commands::{Command, Response};
+use crate::traits::*;
 
 pub trait ActiveLookClient {
     fn send(&self, cmd: &Command);
