@@ -32,31 +32,43 @@ use log::*;
 use thiserror::Error;
 
 pub const PACKET_MIN_SIZE: usize = 5;
+/// Delimiter at the start of a packet
 const PACKET_START: u8 = 0xFF;
+/// Delimiter at the end of a packet
 const PACKET_END: u8 = 0xAA;
 
+/// Errors returned when dealing with the Protocol.
 #[derive(Error, Debug, PartialEq)]
 pub enum ProtocolError {
+    /// The buffer is too small to contain a valid packet
     #[error("Packet length is too small to contain a valid packet")]
     PacketLengthTooSmall,
+    /// The [Packet] is incorrectly delimited
     #[error("Packet delimiters are incorrect")]
     FrameError,
+    /// The [Packet] length does not correspond to the buffer length
     #[error("Invalid packet length")]
     InvalidPacketLength,
+    /// Error coming from [deku] serialization
     #[error(transparent)]
     ParseError(#[from] DekuError),
+    /// [embedded_io::ErrorKind] coming from the underlying layer
     #[error("embedded_io::Error")]
     EmbeddedIOError,
+    /// Not an error, used to signify there is nothing to read
     #[error("No data")]
     Empty,
 }
 
+/// Some packet options
 #[deku_derive(DekuRead, DekuWrite)]
 pub struct CmdFormat {
     #[deku(bits = "3")]
     _reserved: u8,
+    /// The length field is on two bytes if true
     #[deku(bits = "1")]
     pub long: u8,
+    /// Length of the QueryID field, if it exists
     #[deku(bits = "4")]
     pub query_id_size: usize,
 }
@@ -81,7 +93,7 @@ pub struct Packet<T> {
     pub data: T,
 }
 
-/// Packet containing raw bytes
+/// Packet containing raw bytes, to be interpreted later as [Command] or [Response]
 pub type RawPacket<'a> = Packet<Option<&'a [u8]>>;
 
 /// Packet embedding a [Command]
@@ -92,12 +104,12 @@ pub type ResponsePacket = Packet<Response>;
 
 impl<'a> RawPacket<'a> {
     /// Construct a Packet from raw bytes
-    pub fn from_bytes(data: &'a [u8]) -> Result<Self, ProtocolError> {
-        if data.len() < PACKET_MIN_SIZE {
+    pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, ProtocolError> {
+        if bytes.len() < PACKET_MIN_SIZE {
             return Err(ProtocolError::PacketLengthTooSmall);
         }
 
-        if data.first() != Some(&PACKET_START) || data.last() != Some(&PACKET_END) {
+        if bytes.first() != Some(&PACKET_START) || bytes.last() != Some(&PACKET_END) {
             return Err(ProtocolError::FrameError);
         }
 
@@ -105,34 +117,34 @@ impl<'a> RawPacket<'a> {
         let mut index: usize = 1;
 
         // Command ID
-        let cmd_id = data[index];
+        let cmd_id = bytes[index];
         index += 1;
 
         // Command Format
         // from_bytes() takes the offset in bits, hence the * 8
-        let (_, cmd_format) = CmdFormat::from_bytes((data, index * 8))?;
+        let (_, cmd_format) = CmdFormat::from_bytes((bytes, index * 8))?;
         index += 1;
 
         // Length
         // Total length of the packet, including the start and stop delimiters.
         let length: i16 = if cmd_format.long == 1 {
-            let len = i16::from_be_bytes(data[index..index + 1].try_into().unwrap());
+            let len = i16::from_be_bytes(bytes[index..index + 1].try_into().unwrap());
             index += 2;
             len
         } else {
-            let len = data[index];
+            let len = bytes[index];
             index += 1;
             len as i16
         };
 
-        if data.len() != length as usize {
+        if bytes.len() != length as usize {
             return Err(ProtocolError::InvalidPacketLength);
         }
 
         // QueryID
         let query_id = match cmd_format.query_id_size {
             0 => None,
-            len => Some(Vec::from(&data[index..index + len as usize])),
+            len => Some(Vec::from(&bytes[index..index + len as usize])),
         };
         index += cmd_format.query_id_size;
 
@@ -142,11 +154,12 @@ impl<'a> RawPacket<'a> {
             -1 // cmd_id
             -1 // cmd_format
             -cmd_format.query_id_size
+            -cmd_format.long as usize // -1 if length is on two bytes
             -1; // length
 
         let data = match data_len {
             0 => None,
-            len => Some(&data[index..index + len]),
+            len => Some(&bytes[index..index + len]),
         };
 
         Ok(Packet {
@@ -160,8 +173,8 @@ impl<'a> RawPacket<'a> {
 }
 
 impl CommandPacket {
-    pub fn from_bytes<'a>(data: &'a [u8]) -> Result<Self, ProtocolError> {
-        let raw = RawPacket::from_bytes(data)?;
+    pub fn from_bytes<'a>(bytes: &'a [u8]) -> Result<Self, ProtocolError> {
+        let raw = RawPacket::from_bytes(bytes)?;
         Ok(Self::from(raw))
     }
 }
@@ -179,8 +192,8 @@ impl From<RawPacket<'_>> for CommandPacket {
 }
 
 impl ResponsePacket {
-    pub fn from_bytes<'a>(data: &'a [u8]) -> Result<Self, ProtocolError> {
-        let raw = RawPacket::from_bytes(data)?;
+    pub fn from_bytes<'a>(bytes: &'a [u8]) -> Result<Self, ProtocolError> {
+        let raw = RawPacket::from_bytes(bytes)?;
         Ok(Self::from(raw))
     }
 }
@@ -255,16 +268,16 @@ pub mod tests {
 
     #[test]
     fn test_packet_too_small() {
-        let data = [0xFF, 0xAA];
+        let bytes = [0xFF, 0xAA];
         assert_eq!(
             Some(ProtocolError::PacketLengthTooSmall),
-            RawPacket::from_bytes(&data).err()
+            RawPacket::from_bytes(&bytes).err()
         );
     }
 
     #[test]
     fn test_packet_incorrect_length() {
-        let data = [
+        let bytes = [
             0xFF, // start
             0x01, // CmdID
             0x00, // CmdFormat
@@ -275,7 +288,7 @@ pub mod tests {
         ];
         assert_eq!(
             Some(ProtocolError::InvalidPacketLength),
-            RawPacket::from_bytes(&data).err()
+            RawPacket::from_bytes(&bytes).err()
         );
     }
 
@@ -395,8 +408,15 @@ where
     pub fn send(&mut self, cmd: Command) -> Result<(), ProtocolError> {
         trace!("Sending command {:?}", &cmd);
         let packet = Packet::new_with_query_id(cmd, &self.query_id.to_be_bytes());
-        let _res = self.tx.write(&packet.to_bytes()[..]); // XXX ignoring error
-        Ok(())
+        self.query_id += 1;
+        let res = self.tx.write(&packet.to_bytes()[..]);
+        match res {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                error!("{:?}", error);
+                Err(ProtocolError::EmbeddedIOError)
+            }
+        }
     }
 }
 
@@ -432,7 +452,6 @@ where
     pub fn read_data(&mut self) -> Result<CommandPacket, ProtocolError> {
         let mut rxbuf = [0; 255];
         if let Ok(len) = self.rx.read(&mut rxbuf) {
-            debug!("Received {} bytes", len);
             CommandPacket::from_bytes(&rxbuf[..len])
         } else {
             trace!("No data to read");
