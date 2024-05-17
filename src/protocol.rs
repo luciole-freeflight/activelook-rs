@@ -406,7 +406,7 @@ where
     /// Send a command
     /// XXX This takes ownership of the Command for now
     pub fn send(&mut self, cmd: Command) -> Result<(), ProtocolError> {
-        trace!("Sending command {:?}", &cmd);
+        debug!("Sending command {:?}", &cmd);
         let packet = Packet::new_with_query_id(cmd, &self.query_id.to_be_bytes());
         self.query_id += 1;
         let res = self.tx.write(&packet.to_bytes()[..]);
@@ -454,7 +454,7 @@ where
         if let Ok(len) = self.rx.read(&mut rxbuf) {
             CommandPacket::from_bytes(&rxbuf[..len])
         } else {
-            trace!("No data to read");
+            //trace!("No data to read");
             Err(ProtocolError::Empty)
         }
     }
