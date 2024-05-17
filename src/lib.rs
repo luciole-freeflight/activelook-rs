@@ -6,6 +6,7 @@ pub mod traits;
 use crate::commands::{Command, Response};
 use crate::traits::*;
 
+/*
 pub trait ActiveLookClient {
     fn send(&self, cmd: &Command);
     fn recv(&self) -> Option<Response>;
@@ -55,3 +56,4 @@ mod tests {
         //assert!(false);
     }
 }
+*/

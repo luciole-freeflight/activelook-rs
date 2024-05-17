@@ -23,11 +23,11 @@
 //! | 1B     | 1B         | 1B             | 2B          | nB       | mB             | 1B     |
 //!
 use crate::{
-    commands::{self, Command, Response},
+    commands::{Command, Response},
     traits::*,
 };
-use deku::bitvec::{BitSlice, BitVec, Msb0};
 use deku::prelude::*;
+use embedded_io::{self, Read, ReadReady, Write, WriteReady};
 use log::*;
 use thiserror::Error;
 
@@ -45,6 +45,10 @@ pub enum ProtocolError {
     InvalidPacketLength,
     #[error(transparent)]
     ParseError(#[from] DekuError),
+    #[error("embedded_io::Error")]
+    EmbeddedIOError,
+    #[error("No data")]
+    Empty,
 }
 
 #[deku_derive(DekuRead, DekuWrite)]
@@ -330,8 +334,6 @@ pub mod tests {
     }
 }
 
-use embedded_io::{Read, Write, WriteReady};
-
 /// Flow Control: used to prevent the Client Device application from overloading the BLE memory
 /// buffer of the ActiveLook device.
 #[repr(u8)]
@@ -359,7 +361,7 @@ pub enum FlowErrorCtrl {
 pub struct ActiveLookClient<TxActiveLook, RxActiveLook, Ctrl>
 where
     TxActiveLook: Read,
-    RxActiveLook: Write + WriteReady,
+    RxActiveLook: Write,
     Ctrl: Read,
 {
     /// Client Rx is connected to ActiveLook Tx
@@ -367,6 +369,8 @@ where
     /// Client Tx is connected to ActiveLook Rx
     tx: RxActiveLook,
     ctrl: Ctrl,
+    /// Sequence number
+    query_id: i32,
 }
 
 /// Protocol implementation
@@ -374,7 +378,65 @@ where
 impl<TxActiveLook, RxActiveLook, Ctrl> ActiveLookClient<TxActiveLook, RxActiveLook, Ctrl>
 where
     TxActiveLook: Read,
-    RxActiveLook: Write + WriteReady,
+    RxActiveLook: Write,
     Ctrl: Read,
 {
+    pub fn new(rx: TxActiveLook, tx: RxActiveLook, ctrl: Ctrl) -> Self {
+        Self {
+            rx,
+            tx,
+            ctrl,
+            query_id: 0,
+        }
+    }
+
+    /// Send a command
+    /// XXX This takes ownership of the Command for now
+    pub fn send(&mut self, cmd: Command) -> Result<(), ProtocolError> {
+        trace!("Sending command {:?}", &cmd);
+        let packet = Packet::new_with_query_id(cmd, &self.query_id.to_be_bytes());
+        let _res = self.tx.write(&packet.to_bytes()[..]); // XXX ignoring error
+        Ok(())
+    }
+}
+
+/// Server which uses:
+/// - Connection to Tx Activelook Server (Write)
+/// - Connection to Rx Activelook Server (Notify)
+/// - Connection to Control server (Write)
+pub struct ActiveLookServer<TxActiveLook, RxActiveLook, Ctrl>
+where
+    TxActiveLook: Write,
+    RxActiveLook: Read,
+    Ctrl: Write,
+{
+    /// Server Rx is connected to ActiveLook Rx
+    rx: RxActiveLook,
+    /// Server Tx is connected to ActiveLook Tx
+    tx: TxActiveLook,
+    ctrl: Ctrl,
+}
+
+/// Protocol implementation
+/// https://github.com/ActiveLook/Activelook-API-Documentation/blob/fw-4.12.0_doc-revA/ActiveLook_API.md#35-control-server
+impl<TxActiveLook, RxActiveLook, Ctrl> ActiveLookServer<TxActiveLook, RxActiveLook, Ctrl>
+where
+    TxActiveLook: Write,
+    RxActiveLook: Read,
+    Ctrl: Write,
+{
+    pub fn new(rx: RxActiveLook, tx: TxActiveLook, ctrl: Ctrl) -> Self {
+        Self { rx, tx, ctrl }
+    }
+
+    pub fn read_data(&mut self) -> Result<CommandPacket, ProtocolError> {
+        let mut rxbuf = [0; 255];
+        if let Ok(len) = self.rx.read(&mut rxbuf) {
+            debug!("Received {} bytes", len);
+            CommandPacket::from_bytes(&rxbuf[..len])
+        } else {
+            trace!("No data to read");
+            Err(ProtocolError::Empty)
+        }
+    }
 }
