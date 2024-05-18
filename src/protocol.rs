@@ -31,7 +31,12 @@ use embedded_io::{self, Read, ReadReady, Write, WriteReady};
 use log::*;
 use thiserror::Error;
 
+/// Min packet size, based on the smallest valid packet
 pub const PACKET_MIN_SIZE: usize = 5;
+/// Max packet size, as defined in ActiveLook documentation 3.1. Rx Server - Length
+pub const PACKET_MAX_SIZE: usize = 533;
+/// Max data size, as defined in ActiveLook documentation 3.1. Rx Server - Length
+pub const PACKET_DATA_MAX_SIZE: usize = 512;
 /// Delimiter at the start of a packet
 const PACKET_START: u8 = 0xFF;
 /// Delimiter at the end of a packet
@@ -450,7 +455,7 @@ where
     }
 
     pub fn read_data(&mut self) -> Result<CommandPacket, ProtocolError> {
-        let mut rxbuf = [0; 255];
+        let mut rxbuf = [0; PACKET_MAX_SIZE];
         if let Ok(len) = self.rx.read(&mut rxbuf) {
             CommandPacket::from_bytes(&rxbuf[..len])
         } else {
