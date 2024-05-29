@@ -33,13 +33,15 @@ test:stable:
 
 # always run clippy and rustfmt agains our codebase
 lint:rustfmt:
-  image: "guangie88/rustfmt-clippy"
+  image: rust:latest
   allow_failure: true
   script:
+    - rustup component add rustfmt
     - cargo fmt -- --write-mode=diff
 
 lint:clippy:
-  image: "guangie88/rustfmt-clippy"
+  image: rust:latest
   allow_failure: true
   script:
-    - cargo clippy -- -D warnings # Turn all warnings into errors
+    - rustup component add clippy
+    - cargo clippy --all-targets --all-features -- -D warnings # Turn all warnings into errors
