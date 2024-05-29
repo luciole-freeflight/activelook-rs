@@ -19,11 +19,10 @@
 //!
 //use binrw::{binrw, io::Cursor, BinRead, BinWrite};
 use crate::traits::*;
-use deku::bitvec::{BitSlice, BitVec, Msb0};
+use deku::bitvec::{BitVec, Msb0};
 use deku::ctx::BitSize;
 use deku::prelude::*;
 use deku::reader::Reader;
-use thiserror::Error;
 
 // ---------------------------------------------------------------------------
 // All command and response items
@@ -250,7 +249,7 @@ fn read_fixed_size_cstr<R: deku::no_std_io::Read>(
     let mut res = String::new();
     for _ in 0..len {
         let val = u8::from_reader_with_ctx(reader, BitSize(8))?;
-        if val == '\0' as u8 {
+        if val == b'\0' {
             break;
         }
         res.push(val as char);
@@ -259,12 +258,12 @@ fn read_fixed_size_cstr<R: deku::no_std_io::Read>(
 }
 
 fn write_fixed_size_cstr(
-    string: &String,
+    string: &str,
     output: &mut BitVec<u8, Msb0>,
     len: usize,
 ) -> Result<(), DekuError> {
-    let mut string = string.clone();
-    string.truncate(len as usize);
+    let mut string = string.to_owned();
+    string.truncate(len);
     let s = string.as_bytes();
     s.write(output, BitSize(8))?;
     if s.len() < len {
@@ -752,7 +751,7 @@ impl Deserializable for Command {
     fn from_data(id: u8, data: Option<&[u8]>) -> Result<Self, DekuError> {
         let mut bytes = vec![id];
         if let Some(data) = data {
-            bytes.extend_from_slice(&data);
+            bytes.extend_from_slice(data);
         }
         let (_rest, cmd) = Command::from_bytes((&bytes, 0))?;
         Ok(cmd)
@@ -942,7 +941,7 @@ impl Deserializable for Response {
     fn from_data(id: u8, data: Option<&[u8]>) -> Result<Self, DekuError> {
         let mut bytes = vec![id];
         if let Some(data) = data {
-            bytes.extend_from_slice(&data);
+            bytes.extend_from_slice(data);
         }
         let (_rest, cmd) = Self::from_bytes((&bytes, 0))?;
         Ok(cmd)
