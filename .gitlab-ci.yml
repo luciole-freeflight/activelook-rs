@@ -1,5 +1,7 @@
 stages:
   - build
+  - test
+  - lint
 
 # Define a yaml template running a build and then running the tests
 .cargo_test_template: &cargo_test
