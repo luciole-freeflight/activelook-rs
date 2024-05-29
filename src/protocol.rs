@@ -27,7 +27,8 @@ use crate::{
     traits::*,
 };
 use deku::prelude::*;
-use embedded_io::{self, Read, ReadReady, Write, WriteReady};
+use embedded_io::{self, Read, Write};
+//use embedded_io::{ReadReady, WriteReady};
 use log::*;
 use thiserror::Error;
 
@@ -67,6 +68,7 @@ pub enum ProtocolError {
 
 /// Some packet options
 #[deku_derive(DekuRead, DekuWrite)]
+#[derive(Default)]
 pub struct CmdFormat {
     #[deku(bits = "3")]
     _reserved: u8,
@@ -76,16 +78,6 @@ pub struct CmdFormat {
     /// Length of the QueryID field, if it exists
     #[deku(bits = "4")]
     pub query_id_size: usize,
-}
-
-impl Default for CmdFormat {
-    fn default() -> Self {
-        Self {
-            _reserved: 0,
-            long: 0,
-            query_id_size: 0,
-        }
-    }
 }
 
 /// An ActiveLook BLE packet
@@ -149,7 +141,7 @@ impl<'a> RawPacket<'a> {
         // QueryID
         let query_id = match cmd_format.query_id_size {
             0 => None,
-            len => Some(Vec::from(&bytes[index..index + len as usize])),
+            len => Some(Vec::from(&bytes[index..index + len])),
         };
         index += cmd_format.query_id_size;
 
@@ -178,7 +170,7 @@ impl<'a> RawPacket<'a> {
 }
 
 impl CommandPacket {
-    pub fn from_bytes<'a>(bytes: &'a [u8]) -> Result<Self, ProtocolError> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProtocolError> {
         let raw = RawPacket::from_bytes(bytes)?;
         Ok(Self::from(raw))
     }
@@ -197,7 +189,7 @@ impl From<RawPacket<'_>> for CommandPacket {
 }
 
 impl ResponsePacket {
-    pub fn from_bytes<'a>(bytes: &'a [u8]) -> Result<Self, ProtocolError> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProtocolError> {
         let raw = RawPacket::from_bytes(bytes)?;
         Ok(Self::from(raw))
     }
@@ -429,8 +421,9 @@ where
         let mut rxbuf = [0; PACKET_MAX_SIZE];
         if let Ok(len) = self.rx.read(&mut rxbuf) {
             ResponsePacket::from_bytes(&rxbuf[..len])
-        } 
-        else { Err(ProtocolError::Empty) }
+        } else {
+            Err(ProtocolError::Empty)
+        }
     }
 
     // Get notification on TX characteristic
@@ -438,10 +431,10 @@ where
         let mut rxbuf = [0; PACKET_MAX_SIZE];
         if let Ok(_len) = self.ctrl.read(&mut rxbuf) {
             Ok(rxbuf[0])
-        } 
-        else { Err(ProtocolError::Empty) }
+        } else {
+            Err(ProtocolError::Empty)
+        }
     }
-
 }
 
 /// Server which uses:
