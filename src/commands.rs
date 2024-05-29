@@ -237,6 +237,64 @@ pub struct LayoutParameters {
     #[deku(count = "size")]
     commands: Vec<u8>,
 }
+
+/// Image format
+/// - 0x00: 4bpp
+/// - 0x01: 1bpp, transformed into 4bpp by the firmware before saving
+/// - 0x02: 4bpp with Heatshrink compression, decompressed into 4bpp by the firmware before saving
+/// - 0x03: 4bpp with Heatshrink compression, stored compressed, decompressed into 4bpp before display
+/// - 0x08: 8bpp with 4 bits for grey level and 4 bits for alpha channel
+#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[deku(type = "u8")]
+#[repr(u8)]
+pub enum ImgFormat {
+    /// 4 bits per pixel (16 gray levels)
+    #[deku(id = "0")]
+    Img4bpp,
+    /// 1 bit per pixel (black and white)
+    #[deku(id = "1")]
+    Img1bpp,
+    /// 4 bits per pixel with heatshrink compression (16 gray levels), decompress before saving
+    #[deku(id = "2")]
+    Img4bppDecompressBeforeSaving,
+    /// 4 bits per pixel with heatshrink compression (16 gray levels), decompress before displaying
+    #[deku(id = "3")]
+    Img4bppDecompressBeforeDisplaying,
+    /// 8 bits per pixel (16 gray levels + 16 alpha channels)
+    #[deku(id = "8")]
+    Img8bpp,
+}
+
+/// Valid image format for streaming
+/// - 0x01: 1bpp, transformed into 4bpp by the firmware before saving
+/// - 0x02: 4bpp with Heatshrink compression, decompressed into 4bpp by the firmware before saving
+#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[deku(type = "u8")]
+#[repr(u8)]
+pub enum StreamImgFormat {
+    /// 1 bit per pixel (black and white)
+    #[deku(id = "1")]
+    Img1bpp,
+    /// 4 bits per pixel with heatshrink compression (16 gray levels), decompress before saving
+    #[deku(id = "2")]
+    Img4bppDecompressBeforeSaving,
+}
+
+/// Valid image format for animations
+/// - 0x00: 4bpp
+/// - 0x02: 4bpp with Heatshrink compression, decompressed into 4bpp by the firmware before saving
+#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[deku(type = "u8")]
+#[repr(u8)]
+pub enum AnimImgFormat {
+    /// 4 bits per pixel (16 gray levels)
+    #[deku(id = "0")]
+    Img4bpp,
+    /// 4 bits per pixel with heatshrink compression (16 gray levels), decompress before saving
+    #[deku(id = "2")]
+    Img4bppDecompressBeforeSaving,
+}
+
 // ---------------------------------------------------------------------------
 // Deku readers and writers
 // ---------------------------------------------------------------------------
@@ -394,12 +452,7 @@ pub enum Command {
 
     // --- Image commands ---
     /// Save an image of `size` bytes and `width` pixels.
-    /// Save image according to `format`:
-    /// - 0x00: 4bpp
-    /// - 0x01: 1bpp, transformed into 4bpp by the firmware before saving
-    /// - 0x02: 4bpp with Heatshrink compression, decompressed into 4bpp by the firmware before saving
-    /// - 0x03: 4bpp with Heatshrink compression, stored compressed, decompressed into 4bpp before display
-    /// - 0x08: 8bpp with 4 bits for grey level and 4 bits for alpha channel
+    /// Save image according to [ImgFormat]
     #[deku(id = "0x41")]
     ImgSave {
         id: u8,
@@ -407,14 +460,14 @@ pub enum Command {
         size: u32,
         #[deku(endian = "big")]
         width: u16,
-        format: u8,
+        format: ImgFormat,
     },
     /// Display image `id` to the corresponding coordinates.
     /// Coordinates are signed, they can be negative.
     #[deku(id = "0x42")]
     ImgDisplay { id: u8, coord: Point },
     /// Stream an image on display without saving it in memory.
-    /// Supported formats:
+    /// Supported [StreamImgFormat]:
     /// - 0x01: 1bpp
     /// - 0x02: 4bpp with Heatshrink compression
     #[deku(id = "0x44")]
@@ -424,7 +477,7 @@ pub enum Command {
         #[deku(endian = "big")]
         width: u16,
         coord: Point,
-        format: u8,
+        format: StreamImgFormat,
     },
     /// Delete image.
     /// If `id` = 0xFF, delete all images.
