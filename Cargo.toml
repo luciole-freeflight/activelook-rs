@@ -10,10 +10,10 @@ binary-layout = "4.0.1"
 binrw = { version="0.13.3", default-features=false}
 #deku = "0.16.0"
 deku = { git = "https://github.com/sharksforarms/deku.git", rev = "6df1a1b" } # Required for undocumented Vec read_all support.
-bitvec = "1.0.1" # Same as deku
 thiserror = "1.0.58"
 modular-bitfield = "0.11.2"
 cstr_core = "0.2.6"
 log = "0.4.21"
 byteorder = "1.5.0"
 embedded-io = "0.6.1"
+#bitvec = "1.0.1" # Same as deku
