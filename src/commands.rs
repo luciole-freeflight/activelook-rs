@@ -150,13 +150,23 @@ pub enum HoldFlushAction {
 
 /// Common Point type used globally in commands
 #[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[deku(endian = "big")]
 pub struct Point {
+    pub x: i16,
+    pub y: i16,
+}
+
+/// Common Shift type used globally in commands
+#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[deku(endian = "big")]
+pub struct Shift {
     pub x: i16,
     pub y: i16,
 }
 
 /// List item returned in [Response::ImgList]
 #[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[deku(endian = "big")]
 pub struct ImgListItem {
     pub id: u8,
     pub height: u16,
@@ -172,6 +182,7 @@ pub struct FontItem {
 
 /// Configuration item used in [Response::CfgList]
 #[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[deku(endian = "big")]
 pub struct CfgItem {
     /// Name of the configuration
     #[deku(
@@ -193,6 +204,7 @@ pub struct CfgItem {
 
 /// Layout position item used in [Command::LayoutPosition] for instance
 #[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[deku(endian = "big")]
 pub struct LayoutPosition {
     pub x: u16,
     pub y: u8,
@@ -206,6 +218,7 @@ pub struct LayoutParameters {
     /// Upper left clipping region in the display
     pos: LayoutPosition,
     /// Width of the clipping region
+    #[deku(endian = "big")]
     width: u16,
     /// Height of the clipping region
     height: u8,
@@ -292,7 +305,7 @@ pub enum Command {
     Led { state: LedState },
     /// Shift all subsequently displayed objects of (x, y) pixels.
     #[deku(id = "0x09")]
-    Shift { x: i16, y: i16 },
+    Shift { shift: Shift },
     /// Return the user parameters (shift, luma, sensor)
     #[deku(id = "0x0A")]
     Settings,
@@ -373,7 +386,9 @@ pub enum Command {
     Arc {
         center: Point,
         r: u8,
+        #[deku(endian = "big")]
         angle_start: i16,
+        #[deku(endian = "big")]
         angle_end: i16,
         thickness: u8,
     },
@@ -389,7 +404,9 @@ pub enum Command {
     #[deku(id = "0x41")]
     ImgSave {
         id: u8,
+        #[deku(endian = "big")]
         size: u32,
+        #[deku(endian = "big")]
         width: u16,
         format: u8,
     },
@@ -403,7 +420,9 @@ pub enum Command {
     /// - 0x02: 4bpp with Heatshrink compression
     #[deku(id = "0x44")]
     ImgStream {
+        #[deku(endian = "big")]
         size: u32,
+        #[deku(endian = "big")]
         width: u16,
         coord: Point,
         format: u8,
@@ -517,7 +536,9 @@ pub enum Command {
     GaugeSave {
         id: u8,
         pos: Point,
+        #[deku(endian = "big")]
         radius: u16,
+        #[deku(endian = "big")]
         inner: u16,
         start: u8,
         end: u8,
@@ -565,10 +586,13 @@ pub enum Command {
     AnimSave {
         id: u8,
         /// Total animation size, in bytes
+        #[deku(endian = "big")]
         total_size: u32,
         /// Reference frame size in bytes
+        #[deku(endian = "big")]
         img_size: u32,
         /// Reference image width in pixel
+        #[deku(endian = "big")]
         width: u16,
         /// format of reference frame
         /// 0x00: 4bpp
@@ -576,6 +600,7 @@ pub enum Command {
         /// saving
         fmt: u8,
         /// Reference frame size before it is decompressed. for 4bpp it's equal to img_size
+        #[deku(endian = "big")]
         img_compressed_size: u32,
     },
     /// Delete an animation. If `id` = 0xFF, delete all animations
@@ -589,6 +614,7 @@ pub enum Command {
         /// Animation `id`
         id: u8,
         /// Set the inter-frame duration in ms
+        #[deku(endian = "big")]
         delay: u16,
         /// Repeat count, or 0xFF for infinite repetition
         repeat: u8,
@@ -619,9 +645,11 @@ pub enum Command {
         )]
         name: String,
         /// Provided by the user for tracking versions
+        #[deku(endian = "big")]
         version: u32,
         /// If the configuration already exists, the same password must be provided as the one
         /// during the creation.
+        #[deku(endian = "big")]
         password: u32,
     },
     /// Get the number of elements stored in the configuration
@@ -657,6 +685,7 @@ pub enum Command {
             writer = "write_fixed_size_cstr(new, deku::output, NAME_LEN)"
         )]
         new: String,
+        #[deku(endian = "big")]
         password: u32,
     },
     /// Delete a configuration and all elements associated
@@ -799,7 +828,9 @@ pub enum Response {
     #[deku(id = "0x74")]
     GaugeGet {
         pos: Point,
+        #[deku(endian = "big")]
         radius: u16,
+        #[deku(endian = "big")]
         inner: u16,
         start: u8,
         end: u8,
@@ -828,12 +859,16 @@ pub enum Response {
     // --- Statistics commands ---
     /// Number of pixels activated on the display
     #[deku(id = "0xA5")]
-    PixelCount { count: u32 },
+    PixelCount {
+        #[deku(endian = "big")]
+        count: u32,
+    },
 
     // --- Configuration commands ---
     /// Number of elements stored in the configuration
     #[deku(id = "0xD2")]
     CfgRead {
+        #[deku(endian = "big")]
         version: u32,
         nb_img: u8,
         nb_layout: u8,
@@ -849,8 +884,10 @@ pub enum Response {
     #[deku(id = "0xD7")]
     CfgFreeSpace {
         /// Total size available in bytes
+        #[deku(endian = "big")]
         total_size: u32,
         /// Free space available in bytes
+        #[deku(endian = "big")]
         free_space: u32,
     },
     /// Number of configurations stored in memory
@@ -1001,5 +1038,17 @@ mod tests {
 
         let cmd = Command::from_data(0x62, Some(bytes)).unwrap();
         assert_eq!(expected, cmd);
+    }
+
+    #[test]
+    fn test_endianness() {
+        let point = Point {
+            x: 0x1234,
+            y: 0x5678,
+        };
+        let cmd = Command::Point { coord: point };
+        let expected: &[u8] = &[0x12, 0x34, 0x56, 0x78];
+        let data = cmd.data_bytes().unwrap();
+        assert_eq!(expected, data);
     }
 }
