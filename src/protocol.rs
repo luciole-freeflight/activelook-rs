@@ -423,6 +423,25 @@ where
             }
         }
     }
+
+    // Get notification on TX characteristic
+    pub fn read_tx_char(&mut self) -> Result<ResponsePacket, ProtocolError> {
+        let mut rxbuf = [0; PACKET_MAX_SIZE];
+        if let Ok(len) = self.rx.read(&mut rxbuf) {
+            ResponsePacket::from_bytes(&rxbuf[..len])
+        } 
+        else { Err(ProtocolError::Empty) }
+    }
+
+    // Get notification on TX characteristic
+    pub fn read_ctrl_char(&mut self) -> Result<u8, ProtocolError> {
+        let mut rxbuf = [0; PACKET_MAX_SIZE];
+        if let Ok(_len) = self.ctrl.read(&mut rxbuf) {
+            Ok(rxbuf[0])
+        } 
+        else { Err(ProtocolError::Empty) }
+    }
+
 }
 
 /// Server which uses:
