@@ -1,9 +1,31 @@
 stages:
   - build
 
-rust-latest:
-  stage: build
-  image: rust-latest
+# Define a yaml template running a build and then running the tests
+.cargo_test_template: &cargo_test
   script:
+    - rustc --version && cargo --version
     - cargo build --verbose
     - cargo test --verbose
+
+# Set any required environment variables here
+variables:
+  RUST_BACKTRACE: "FULL"
+
+# The following tests: stages inherit from the test template and configure the image used for the various Rust release trains
+test:stable:
+  image: "rustdocker/rust:stable"
+  <<: *cargo_test
+
+# always run clippy and rustfmt agains our codebase
+lint:rustfmt:
+  image: "guangie88/rustfmt-clippy"
+  allow_failure: true
+  script:
+    - cargo fmt -- --write-mode=diff
+
+lint:clippy:
+  image: "guangie88/rustfmt-clippy"
+  allow_failure: true
+  script:
+    - cargo clippy -- -D warnings # Turn all warnings into errors
