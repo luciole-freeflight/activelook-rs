@@ -475,4 +475,9 @@ where
             Err(ProtocolError::Empty)
         }
     }
+
+    pub fn send_response(&mut self, response: ResponsePacket) {
+        let bytes = response.to_bytes();
+        self.tx.write(&bytes);
+    }
 }
