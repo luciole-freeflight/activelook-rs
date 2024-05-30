@@ -61,6 +61,9 @@ pub enum ProtocolError {
     /// [embedded_io::ErrorKind] coming from the underlying layer
     #[error("embedded_io::Error")]
     EmbeddedIOError,
+    /// Incorrect QueryID
+    #[error("QueryID does not correspond to sent Command")]
+    IncorrectQueryId,
     /// Not an error, used to signify there is nothing to read
     #[error("No data")]
     Empty,
@@ -380,7 +383,7 @@ where
     tx: RxActiveLook,
     ctrl: Ctrl,
     /// Sequence number
-    query_id: i32,
+    query_id: u32,
 }
 
 /// Protocol implementation
@@ -413,6 +416,42 @@ where
                 error!("{:?}", error);
                 Err(ProtocolError::EmbeddedIOError)
             }
+        }
+    }
+
+    pub fn send_command_expect_response(
+        &mut self,
+        cmd: Command,
+    ) -> Result<Response, ProtocolError> {
+        debug!("Sending command {:?}, expecting Response", &cmd);
+        let packet = Packet::new_with_query_id(cmd, &self.query_id.to_be_bytes());
+        let res = self.tx.write(&packet.to_bytes()[..]);
+        self.query_id += 1;
+        if let Err(error) = res {
+            return Err(ProtocolError::EmbeddedIOError);
+        }
+
+        let mut response_pkt: ResponsePacket;
+        loop {
+            let resp = self.read_tx_char();
+            if let Some(pkt) = resp {
+                response_pkt = pkt;
+                break;
+            }
+        }
+        debug!("Received response {:?}", &response_pkt.data);
+        if let Some(id) = response_pkt.query_id {
+            if id.len() != core::mem::size_of::<u32>() {
+                return Err(ProtocolError::IncorrectQueryId);
+            }
+            // Here unwrap() is safe, because we checked the vec length beforehand
+            if u32::from_be_bytes(id.try_into().unwrap()) == self.query_id {
+                Ok(response_pkt.data)
+            } else {
+                Err(ProtocolError::IncorrectQueryId)
+            }
+        } else {
+            Err(ProtocolError::IncorrectQueryId)
         }
     }
 
