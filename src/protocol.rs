@@ -434,7 +434,7 @@ where
         let mut response_pkt: ResponsePacket;
         loop {
             let resp = self.read_tx_char();
-            if let Some(pkt) = resp {
+            if let Ok(pkt) = resp {
                 response_pkt = pkt;
                 break;
             }
