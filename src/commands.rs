@@ -23,6 +23,7 @@ use deku::bitvec::{BitVec, Msb0};
 use deku::ctx::BitSize;
 use deku::prelude::*;
 use deku::reader::Reader;
+use log::*;
 
 // ---------------------------------------------------------------------------
 // All command and response items
@@ -177,6 +178,41 @@ pub struct ImgListItem {
 pub struct FontItem {
     pub id: u8,
     pub height: u8,
+}
+
+/// Default fonts stored in ActiveLook glasses
+#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[deku(type = "u8")]
+#[repr(u8)]
+pub enum DefaultFont {
+    #[deku(id = "0")]
+    Default24,
+    #[deku(id = "1")]
+    ComputerModernSansSerif24,
+    #[deku(id = "2")]
+    ComputerModernSansSerif35,
+    #[deku(id = "3")]
+    ComputerModernSansSerif49,
+}
+
+impl Into<u8> for DefaultFont {
+    fn into(self) -> u8 {
+        self.deku_id().unwrap()
+    }
+}
+
+impl From<u8> for DefaultFont {
+    fn from(id: u8) -> Self {
+        match id {
+            1 => DefaultFont::ComputerModernSansSerif24,
+            2 => DefaultFont::ComputerModernSansSerif35,
+            3 => DefaultFont::ComputerModernSansSerif49,
+            _ => {
+                warn!("Unknown font {}", id);
+                DefaultFont::Default24
+            }
+        }
+    }
 }
 
 /// Configuration item used in [Response::CfgList]
