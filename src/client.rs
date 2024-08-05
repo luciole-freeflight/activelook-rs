@@ -86,7 +86,7 @@ where
                 return Err(ProtocolError::IncorrectQueryId);
             }
             // Here unwrap() is safe, because we checked the vec length beforehand
-            if u32::from_be_bytes(id.try_into().unwrap()) == self.query_id {
+            if u32::from_be_bytes(id.try_into().unwrap()) == self.query_id-1 {
                 Ok(response_pkt.data)
             } else {
                 Err(ProtocolError::IncorrectQueryId)
