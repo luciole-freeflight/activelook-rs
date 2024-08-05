@@ -45,11 +45,10 @@ where
     }
 
     /// Send a command
-    /// XXX This takes ownership of the Command for now
     pub fn send(&mut self, cmd: &impl Serializable) -> Result<(), ProtocolError> {
+        self.query_id += 1;
         debug!("Sending command id {}", cmd.id().expect("Not a command?"));
         let packet = Packet::new_with_query_id(cmd, &self.query_id.to_be_bytes());
-        self.query_id += 1;
         let res = self.tx.write(&packet.to_bytes()[..]);
         match res {
             Ok(_) => Ok(()),
@@ -62,12 +61,15 @@ where
 
     pub fn send_command_expect_response(
         &mut self,
-        cmd: &Command,
+        cmd: &impl Serializable,
     ) -> Result<Response, ProtocolError> {
-        debug!("Sending command {:?}, expecting Response", &cmd);
+        self.query_id += 1;
+        debug!(
+            "Sending command id {}, expecting Response",
+            cmd.id().expect("Not a command?")
+        );
         let packet = Packet::new_with_query_id(cmd, &self.query_id.to_be_bytes());
         let res = self.tx.write(&packet.to_bytes()[..]);
-        self.query_id += 1;
         if let Err(error) = res {
             return Err(ProtocolError::EmbeddedIOError);
         }
@@ -86,7 +88,7 @@ where
                 return Err(ProtocolError::IncorrectQueryId);
             }
             // Here unwrap() is safe, because we checked the vec length beforehand
-            if u32::from_be_bytes(id.try_into().unwrap()) == self.query_id-1 {
+            if u32::from_be_bytes(id.try_into().unwrap()) == self.query_id {
                 Ok(response_pkt.data)
             } else {
                 Err(ProtocolError::IncorrectQueryId)
