@@ -22,6 +22,15 @@
 //! | Start  | Command ID | Command Format | Length      | Query ID | Data           | Footer |
 //! | 1B     | 1B         | 1B             | 2B          | nB       | mB             | 1B     |
 //!
+//!
+//! A Packet can be bigger than the BLE max size; we then have to send it in multiple chunks.
+//! This should be handled by the lower protocol layers.
+//!
+//! From ActiveLook official documentation:
+//!
+//!    A Command can be sent in multiple BLE chunks.
+//!    The length and presence of a footer are checked to reconstruct the whole command.
+//!
 use crate::{
     commands::{Command, Response},
     traits::*,
@@ -112,6 +121,9 @@ pub struct Packet<T> {
     /// Contains the application payload: [Command] or [Response]
     pub data: T,
 }
+
+// XXX Packet should depend on a trait, not implementation.
+// This will enable us to send image data, in addition to commands.
 
 /// Packet containing raw bytes, to be interpreted later as [Command] or [Response]
 pub type RawPacket<'a> = Packet<Option<&'a [u8]>>;
@@ -232,10 +244,10 @@ impl From<RawPacket<'_>> for ResponsePacket {
 
 impl<T> Packet<T>
 where
-    T: Serializable + Deserializable,
+    T: Serializable, // + Deserializable,
 {
     /// Create a packet from a [Command] or [Response]
-    pub fn new(from: T) -> Self {
+    pub fn new(from: &T) -> Self {
         let mut cmd_format = CmdFormat::default();
         let mut length: i16 = from.data_bytes().expect("Should have data").len() as i16 + 5;
         if length > 255 {
@@ -247,12 +259,12 @@ where
             format: cmd_format,
             length,
             query_id: None,
-            data: from,
+            data: (*from).clone(),
         }
     }
 
     /// Create a packet from a [Command] or [Response], with a given query_id
-    pub fn new_with_query_id(from: T, query_id: &[u8]) -> Self {
+    pub fn new_with_query_id(from: &T, query_id: &[u8]) -> Self {
         let mut packet = Packet::new(from);
         packet.query_id = Some(Vec::from(query_id));
         packet.format.query_id_size = query_id.len();
@@ -347,7 +359,7 @@ pub mod tests {
     #[test]
     fn test_packet_creation() {
         let cmd = Command::PowerDisplay { en: 1 };
-        let packet = Packet::new(cmd);
+        let packet = Packet::new(&cmd);
         assert_eq!(packet.cmd_id, 0x00);
     }
 
@@ -356,7 +368,7 @@ pub mod tests {
         let expected = [0xFF, 0x00, 0x00, 0x06, 0x01, 0xAA];
         let expected_cmd = Command::PowerDisplay { en: 1 };
         let cmd = Command::PowerDisplay { en: 1 };
-        let packet = Packet::new(cmd);
+        let packet = Packet::new(&cmd);
         // Serialization
         let bytes = packet.to_bytes();
         assert_eq!(expected, bytes[..]);

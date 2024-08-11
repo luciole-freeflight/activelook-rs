@@ -46,8 +46,8 @@ where
 
     /// Send a command
     /// XXX This takes ownership of the Command for now
-    pub fn send(&mut self, cmd: Command) -> Result<(), ProtocolError> {
-        debug!("Sending command {:?}", &cmd);
+    pub fn send(&mut self, cmd: &impl Serializable) -> Result<(), ProtocolError> {
+        debug!("Sending command id {}", cmd.id().expect("Not a command?"));
         let packet = Packet::new_with_query_id(cmd, &self.query_id.to_be_bytes());
         self.query_id += 1;
         let res = self.tx.write(&packet.to_bytes()[..]);
@@ -62,7 +62,7 @@ where
 
     pub fn send_command_expect_response(
         &mut self,
-        cmd: Command,
+        cmd: &Command,
     ) -> Result<Response, ProtocolError> {
         debug!("Sending command {:?}, expecting Response", &cmd);
         let packet = Packet::new_with_query_id(cmd, &self.query_id.to_be_bytes());

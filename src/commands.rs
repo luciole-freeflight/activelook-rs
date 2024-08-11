@@ -18,12 +18,14 @@
 //! - a lower-level protocol handling the serialization, Query ID etc.
 //!
 //use binrw::{binrw, io::Cursor, BinRead, BinWrite};
+use crate::image::Image;
 use crate::traits::*;
 use deku::bitvec::{BitVec, Msb0};
 use deku::ctx::BitSize;
 use deku::prelude::*;
 use deku::reader::Reader;
 use log::*;
+use std::cmp;
 
 // ---------------------------------------------------------------------------
 // All command and response items
@@ -39,7 +41,7 @@ pub const TEXT_LEN: usize = 255;
 
 /// Errors returned by ActiveLook glasses
 #[deku_derive(DekuRead, DekuWrite)]
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[deku(type = "u8")]
 #[repr(u8)]
 pub enum CmdError {
@@ -57,7 +59,7 @@ pub enum CmdError {
 }
 
 /// Available Demo values for [Command::Demo]
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(type = "u8")]
 #[repr(u8)]
 pub enum DemoID {
@@ -70,7 +72,7 @@ pub enum DemoID {
 }
 
 /// Available state values for [Command::Led]
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(type = "u8")]
 #[repr(u8)]
 pub enum LedState {
@@ -85,7 +87,7 @@ pub enum LedState {
 }
 
 /// Available values for [Command::Info]
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(type = "u8")]
 #[repr(u8)]
 pub enum DeviceInfo {
@@ -132,7 +134,7 @@ pub enum DeviceInfo {
 /// without screen flickering.  
 /// The command is nested, the [HoldFlushAction::Flush] action must be used the same number of times
 /// [HoldFlushAction::Hold] was used.
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(type = "u8")]
 #[repr(u8)]
 pub enum HoldFlushAction {
@@ -149,7 +151,7 @@ pub enum HoldFlushAction {
 }
 
 /// Common Point type used globally in commands
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(endian = "big")]
 pub struct Point {
     pub x: i16,
@@ -157,7 +159,7 @@ pub struct Point {
 }
 
 /// Common Shift type used globally in commands
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(endian = "big")]
 pub struct Shift {
     pub x: i16,
@@ -165,7 +167,7 @@ pub struct Shift {
 }
 
 /// List item returned in [Response::ImgList]
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(endian = "big")]
 pub struct ImgListItem {
     pub id: u8,
@@ -174,7 +176,7 @@ pub struct ImgListItem {
 }
 
 /// Font item used in [Response::FontList]
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 pub struct FontItem {
     pub id: u8,
     pub height: u8,
@@ -216,7 +218,7 @@ impl From<u8> for DefaultFont {
 }
 
 /// Configuration item used in [Response::CfgList]
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(endian = "big")]
 pub struct CfgItem {
     /// Name of the configuration
@@ -238,7 +240,7 @@ pub struct CfgItem {
 }
 
 /// Layout position item used in [Command::LayoutPosition] for instance
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(endian = "big")]
 pub struct LayoutPosition {
     pub x: u16,
@@ -246,7 +248,7 @@ pub struct LayoutPosition {
 }
 
 /// Layout parameters
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 pub struct LayoutParameters {
     /// Size of additional commands in bytes
     size: u8,
@@ -280,7 +282,7 @@ pub struct LayoutParameters {
 /// - 0x02: 4bpp with Heatshrink compression, decompressed into 4bpp by the firmware before saving
 /// - 0x03: 4bpp with Heatshrink compression, stored compressed, decompressed into 4bpp before display
 /// - 0x08: 8bpp with 4 bits for grey level and 4 bits for alpha channel
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(type = "u8")]
 #[repr(u8)]
 pub enum ImgFormat {
@@ -301,10 +303,28 @@ pub enum ImgFormat {
     Img8bpp,
 }
 
+impl ImgFormat {
+    fn nb_of_bytes(&self, width: usize) -> usize {
+        let res = match self {
+            // 1 pixel per byte
+            ImgFormat::Img8bpp => width,
+            // 2 pixels per byte
+            ImgFormat::Img4bpp => (width + 1) / 2,
+            // 8 pixels per byte
+            ImgFormat::Img1bpp => (width + 7) / 8,
+            // Unknown
+            ImgFormat::Img4bppDecompressBeforeSaving
+            | ImgFormat::Img4bppDecompressBeforeDisplaying => width,
+        };
+        debug!("ImgFormat {:?}, width {} -> nb_bytes {}", self, width, res);
+        res
+    }
+}
+
 /// Valid image format for streaming
 /// - 0x01: 1bpp, transformed into 4bpp by the firmware before saving
 /// - 0x02: 4bpp with Heatshrink compression, decompressed into 4bpp by the firmware before saving
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(type = "u8")]
 #[repr(u8)]
 pub enum StreamImgFormat {
@@ -314,6 +334,31 @@ pub enum StreamImgFormat {
     /// 4 bits per pixel with heatshrink compression (16 gray levels), decompress before saving
     #[deku(id = "2")]
     Img4bppDecompressBeforeSaving,
+}
+
+impl StreamImgFormat {
+    fn nb_of_bytes(&self, width: usize) -> usize {
+        match self {
+            // 8 pixels per byte
+            StreamImgFormat::Img1bpp => (width + 7) / 8,
+            // Unknown
+            StreamImgFormat::Img4bppDecompressBeforeSaving => width,
+        }
+    }
+}
+
+impl TryFrom<ImgFormat> for StreamImgFormat {
+    type Error = ();
+
+    fn try_from(value: ImgFormat) -> Result<Self, Self::Error> {
+        match value {
+            ImgFormat::Img1bpp => Ok(StreamImgFormat::Img1bpp),
+            ImgFormat::Img4bppDecompressBeforeSaving => {
+                Ok(StreamImgFormat::Img4bppDecompressBeforeSaving)
+            }
+            _ => Err(()),
+        }
+    }
 }
 
 /// Valid image format for animations
@@ -370,7 +415,7 @@ fn write_fixed_size_cstr(
 // All commands
 // ---------------------------------------------------------------------------
 /// These map to the commands MasterToActiveLook
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(type = "u8")]
 #[repr(u8)]
 pub enum Command {
@@ -497,6 +542,9 @@ pub enum Command {
         #[deku(endian = "big")]
         width: u16,
         format: ImgFormat,
+        /// XXX Image data is static in memory, no need to copy in a Vec
+        #[deku(count = "size")]
+        data: Vec<u8>,
     },
     /// Display image `id` to the corresponding coordinates.
     /// Coordinates are signed, they can be negative.
@@ -514,6 +562,9 @@ pub enum Command {
         width: u16,
         coord: Point,
         format: StreamImgFormat,
+        /// XXX Image data is static in memory, no need to copy in a Vec
+        #[deku(count = "size")]
+        data: Vec<u8>,
     },
     /// Delete image.
     /// If `id` = 0xFF, delete all images.
@@ -809,10 +860,8 @@ pub enum Command {
     Info { id: DeviceInfo },
 }
 
-// Ttrait implementations
+// Trait implementations
 impl Serializable for Command {
-    type Item = Self;
-
     /// Access the discriminant as unique ID
     fn id(&self) -> Result<u8, DekuError> {
         self.deku_id()
@@ -830,6 +879,66 @@ impl Serializable for Command {
     fn as_bytes(&self) -> Result<(u8, Vec<u8>), DekuError> {
         let data = self.data_bytes()?;
         Ok((self.id()?, data))
+    }
+
+    /// Extract CommandID and data bytes from Command, in smaller chunks
+    fn as_bytes_chunks(&self, chunk_size: usize) -> Result<(u8, Vec<Vec<u8>>), DekuError> {
+        let mut res = Vec::new();
+        let data = self.data_bytes()?;
+        let len = data.len();
+        let mut index: usize = 0;
+
+        let mut header_len: usize = 0;
+        // For most commands we don't care about data alignment.
+        // For imgSave and imgStream, they need to be aligned to the img line.
+        let mut byte_align: usize = 1;
+
+        // First chunk only has the imgSave/imgStream data header.
+        // Otherwise we don't care and we just split the remaining data according to length
+        match self {
+            Command::ImgSave {
+                id: _,
+                size: _,
+                width,
+                format,
+                data: _,
+            } => {
+                header_len = 8;
+                byte_align = format.nb_of_bytes(*width as usize);
+            }
+            Command::ImgStream {
+                size: _,
+                width,
+                coord: _,
+                format,
+                data: _,
+            } => {
+                header_len = 11;
+                byte_align = format.nb_of_bytes(*width as usize);
+            }
+            _ => {}
+        };
+
+        debug!("header_len: {}, byte_align: {}", header_len, byte_align);
+
+        if header_len > 0 {
+            res.push(data[index..header_len].to_vec());
+            index += header_len;
+        }
+
+        // Push all remaining data, split at image line end.
+        let nblines = chunk_size / byte_align;
+        let chunk = nblines * byte_align;
+        while index < len {
+            let end = cmp::min(len, index + chunk);
+            debug!(
+                "nblines {}, chunk {}, index {}, end {}",
+                nblines, chunk, index, end
+            );
+            res.push(data[index..end].to_vec());
+            index = end;
+        }
+        Ok((self.id()?, res))
     }
 }
 
@@ -852,7 +961,7 @@ impl Deserializable for Command {
 // ---------------------------------------------------------------------------
 
 /// These map to the responses ActiveLookToMaster
-#[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
+#[derive(Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
 #[deku(type = "u8")]
 #[repr(u8)]
 pub enum Response {
@@ -1001,8 +1110,6 @@ pub enum Response {
 
 // Ttrait implementations
 impl Serializable for Response {
-    type Item = Self;
-
     /// Access the discriminant as unique ID
     fn id(&self) -> Result<u8, DekuError> {
         self.deku_id()
@@ -1016,10 +1123,25 @@ impl Serializable for Response {
         Ok(bytes)
     }
 
-    /// Extract CommandID and data bytes from Command
+    /// Extract CommandID and data bytes from Response
     fn as_bytes(&self) -> Result<(u8, Vec<u8>), DekuError> {
         let data = self.data_bytes()?;
         Ok((self.id()?, data))
+    }
+
+    /// Extract CommandID and data bytes from Response, in smaller chunks
+    fn as_bytes_chunks(&self, chunk_size: usize) -> Result<(u8, Vec<Vec<u8>>), DekuError> {
+        let mut res = Vec::new();
+        let data = self.data_bytes()?;
+        let len = data.len();
+        let mut index: usize = 0;
+        // Push all remaining data
+        while index < len {
+            let end = cmp::min(len, index + chunk_size);
+            res.push(data[index..end].to_vec());
+            index = end;
+        }
+        Ok((self.id()?, res))
     }
 }
 
@@ -1043,6 +1165,7 @@ impl Deserializable for Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log;
 
     #[test]
     fn test_id() {
@@ -1138,5 +1261,48 @@ mod tests {
         let expected: &[u8] = &[0x12, 0x34, 0x56, 0x78];
         let data = cmd.data_bytes().unwrap();
         assert_eq!(expected, data);
+    }
+
+    #[test]
+    fn test_img_format_bytes() {
+        let a = ImgFormat::Img1bpp;
+        assert_eq!(a.nb_of_bytes(7), 1);
+        assert_eq!(a.nb_of_bytes(8), 1);
+        assert_eq!(a.nb_of_bytes(9), 2);
+    }
+
+    #[test]
+    fn test_image_split_big_chunk_size() {
+        let cmd = Command::ImgSave {
+            id: 0,
+            size: 10, // 10 data bytes
+            width: 8,
+            format: ImgFormat::Img1bpp,
+            data: vec![0; 10],
+        };
+
+        let (id, split) = cmd.as_bytes_chunks(255).unwrap();
+        assert_eq!(2, split.len());
+        assert_eq!(8, split[0].len());
+        assert_eq!(10, split[1].len());
+    }
+
+    #[test_log::test]
+    fn test_image_split_small_chunk_size() {
+        let cmd = Command::ImgSave {
+            id: 0,
+            size: 10, // 10 data bytes
+            width: 7,
+            format: ImgFormat::Img1bpp,
+            data: vec![0; 10],
+        };
+
+        let (id, split) = cmd.as_bytes_chunks(3).unwrap();
+        assert_eq!(5, split.len());
+        assert_eq!(8, split[0].len());
+        assert_eq!(3, split[1].len());
+        assert_eq!(3, split[2].len());
+        assert_eq!(3, split[3].len());
+        assert_eq!(1, split[4].len());
     }
 }
