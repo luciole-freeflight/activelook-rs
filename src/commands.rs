@@ -42,7 +42,7 @@ pub const TEXT_LEN: usize = 255;
 /// Errors returned by ActiveLook glasses
 #[deku_derive(DekuRead, DekuWrite)]
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[deku(type = "u8")]
+#[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum CmdError {
     #[deku(id = "1")]
@@ -60,7 +60,7 @@ pub enum CmdError {
 
 /// Available Demo values for [Command::Demo]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
-#[deku(type = "u8")]
+#[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum DemoID {
     #[deku(id = "0")]
@@ -73,7 +73,7 @@ pub enum DemoID {
 
 /// Available state values for [Command::Led]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
-#[deku(type = "u8")]
+#[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum LedState {
     #[deku(id = "0")]
@@ -88,7 +88,7 @@ pub enum LedState {
 
 /// Available values for [Command::Info]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
-#[deku(type = "u8")]
+#[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum DeviceInfo {
     #[deku(id = "0")]
@@ -127,15 +127,15 @@ pub enum DeviceInfo {
     Certification6,
 }
 
-/// Hold or Flush the graphic engine.  
+/// Hold or Flush the graphic engine.
 ///
 /// When held, new display commands are stored in memory and are displayed when the graphic engine
 /// is flushed. This allows stacking multiple graphic operations and displaying them simultaneously
-/// without screen flickering.  
+/// without screen flickering.
 /// The command is nested, the [HoldFlushAction::Flush] action must be used the same number of times
 /// [HoldFlushAction::Hold] was used.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
-#[deku(type = "u8")]
+#[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum HoldFlushAction {
     /// Hold display
@@ -184,7 +184,7 @@ pub struct FontItem {
 
 /// Default fonts stored in ActiveLook glasses
 #[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
-#[deku(type = "u8")]
+#[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum DefaultFont {
     #[deku(id = "0")]
@@ -224,7 +224,7 @@ pub struct CfgItem {
     /// Name of the configuration
     #[deku(
         reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
-        writer = "write_fixed_size_cstr(name, deku::output, NAME_LEN)"
+        writer = "write_fixed_size_cstr(deku::writer, name, NAME_LEN)"
     )]
     pub name: String,
     /// Size in bytes
@@ -283,7 +283,7 @@ pub struct LayoutParameters {
 /// - 0x03: 4bpp with Heatshrink compression, stored compressed, decompressed into 4bpp before display
 /// - 0x08: 8bpp with 4 bits for grey level and 4 bits for alpha channel
 #[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
-#[deku(type = "u8")]
+#[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum ImgFormat {
     /// 4 bits per pixel (16 gray levels)
@@ -325,7 +325,7 @@ impl ImgFormat {
 /// - 0x01: 1bpp, transformed into 4bpp by the firmware before saving
 /// - 0x02: 4bpp with Heatshrink compression, decompressed into 4bpp by the firmware before saving
 #[derive(Copy, Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
-#[deku(type = "u8")]
+#[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum StreamImgFormat {
     /// 1 bit per pixel (black and white)
@@ -365,7 +365,7 @@ impl TryFrom<ImgFormat> for StreamImgFormat {
 /// - 0x00: 4bpp
 /// - 0x02: 4bpp with Heatshrink compression, decompressed into 4bpp by the firmware before saving
 #[derive(Debug, Eq, PartialEq, DekuRead, DekuWrite)]
-#[deku(type = "u8")]
+#[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum AnimImgFormat {
     /// 4 bits per pixel (16 gray levels)
@@ -381,7 +381,7 @@ pub enum AnimImgFormat {
 // ---------------------------------------------------------------------------
 /// Read a fixed-len slice containing a 0-delimited C string.
 /// The 0 is optional in the input if the max `len` is reached
-fn read_fixed_size_cstr<R: deku::no_std_io::Read>(
+fn read_fixed_size_cstr<R: deku::no_std_io::Read + deku::no_std_io::Seek>(
     reader: &mut Reader<R>,
     len: usize,
 ) -> Result<String, DekuError> {
@@ -396,17 +396,19 @@ fn read_fixed_size_cstr<R: deku::no_std_io::Read>(
     Ok(res)
 }
 
-fn write_fixed_size_cstr(
+fn write_fixed_size_cstr<W: deku::no_std_io::Write + deku::no_std_io::Seek>(
+    writer: &mut Writer<W>,
     string: &str,
-    output: &mut BitVec<u8, Msb0>,
     len: usize,
 ) -> Result<(), DekuError> {
     let mut string = string.to_owned();
     string.truncate(len);
     let s = string.as_bytes();
-    s.write(output, BitSize(8))?;
+    s.to_writer(writer, BitSize(8))?;
+    //s.write(output, BitSize(8))?;
     if s.len() < len {
-        0u8.write(output, BitSize(8))?;
+        //0u8.write(output, BitSize(8))?;
+        0u8.to_writer(writer, BitSize(8))?;
     }
     Ok(())
 }
@@ -416,7 +418,7 @@ fn write_fixed_size_cstr(
 // ---------------------------------------------------------------------------
 /// These map to the commands MasterToActiveLook
 #[derive(Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
-#[deku(type = "u8")]
+#[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum Command {
     // --- General commands --
@@ -495,7 +497,7 @@ pub enum Command {
         color: u8,
         #[deku(
             reader = "read_fixed_size_cstr(deku::reader, TEXT_LEN)",
-            writer = "write_fixed_size_cstr(string, deku::output, TEXT_LEN)"
+            writer = "write_fixed_size_cstr(deku::writer, string, TEXT_LEN)"
         )]
         string: String,
     },
@@ -606,7 +608,7 @@ pub enum Command {
         id: u8,
         #[deku(
             reader = "read_fixed_size_cstr(deku::reader, TEXT_LEN)",
-            writer = "write_fixed_size_cstr(text, deku::output, TEXT_LEN)"
+            writer = "write_fixed_size_cstr(deku::writer, text, TEXT_LEN)"
         )]
         text: String,
     },
@@ -628,7 +630,7 @@ pub enum Command {
         pos: LayoutPosition,
         #[deku(
             reader = "read_fixed_size_cstr(deku::reader, TEXT_LEN)",
-            writer = "write_fixed_size_cstr(text, deku::output, TEXT_LEN)"
+            writer = "write_fixed_size_cstr(deku::writer, text, TEXT_LEN)"
         )]
         text: String,
         /// Extra commands with the same format as [Commands::LayoutSave]
@@ -647,7 +649,7 @@ pub enum Command {
         id: u8,
         #[deku(
             reader = "read_fixed_size_cstr(deku::reader, TEXT_LEN)",
-            writer = "write_fixed_size_cstr(text, deku::output, TEXT_LEN)"
+            writer = "write_fixed_size_cstr(deku::writer, text, TEXT_LEN)"
         )]
         text: String,
     },
@@ -658,7 +660,7 @@ pub enum Command {
         pos: LayoutPosition,
         #[deku(
             reader = "read_fixed_size_cstr(deku::reader, TEXT_LEN)",
-            writer = "write_fixed_size_cstr(text, deku::output, TEXT_LEN)"
+            writer = "write_fixed_size_cstr(deku::writer, text, TEXT_LEN)"
         )]
         text: String,
         /// Extra commands with the same format as [Commands::LayoutSave]
@@ -780,7 +782,7 @@ pub enum Command {
         /// Name of the configuration
         #[deku(
             reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
-            writer = "write_fixed_size_cstr(name, deku::output, NAME_LEN)"
+            writer = "write_fixed_size_cstr(deku::writer, name, NAME_LEN)"
         )]
         name: String,
         /// Provided by the user for tracking versions
@@ -796,7 +798,7 @@ pub enum Command {
     CfgRead {
         #[deku(
             reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
-            writer = "write_fixed_size_cstr(name, deku::output, NAME_LEN)"
+            writer = "write_fixed_size_cstr(deku::writer, name, NAME_LEN)"
         )]
         name: String,
     },
@@ -805,7 +807,7 @@ pub enum Command {
     CfgSet {
         #[deku(
             reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
-            writer = "write_fixed_size_cstr(name, deku::output, NAME_LEN)"
+            writer = "write_fixed_size_cstr(deku::writer, name, NAME_LEN)"
         )]
         name: String,
     },
@@ -816,12 +818,12 @@ pub enum Command {
     CfgRename {
         #[deku(
             reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
-            writer = "write_fixed_size_cstr(old, deku::output, NAME_LEN)"
+            writer = "write_fixed_size_cstr(deku::writer, old, NAME_LEN)"
         )]
         old: String,
         #[deku(
             reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
-            writer = "write_fixed_size_cstr(new, deku::output, NAME_LEN)"
+            writer = "write_fixed_size_cstr(deku::writer, new, NAME_LEN)"
         )]
         new: String,
         #[deku(endian = "big")]
@@ -832,7 +834,7 @@ pub enum Command {
     CfgDelete {
         #[deku(
             reader = "read_fixed_size_cstr(deku::reader, NAME_LEN)",
-            writer = "write_fixed_size_cstr(name, deku::output, NAME_LEN)"
+            writer = "write_fixed_size_cstr(deku::writer, name, NAME_LEN)"
         )]
         name: String,
     },
@@ -962,7 +964,7 @@ impl Deserializable for Command {
 
 /// These map to the responses ActiveLookToMaster
 #[derive(Clone, Debug, Eq, PartialEq, DekuRead, DekuWrite)]
-#[deku(type = "u8")]
+#[deku(id_type = "u8")]
 #[repr(u8)]
 pub enum Response {
     // --- General commands --
